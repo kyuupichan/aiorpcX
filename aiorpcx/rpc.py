@@ -216,7 +216,7 @@ class RPCHelperBase(object):
         raise NotImplementedError
 
     def cancel_all(self):
-        '''Cancel all scheduled tasks and jobs.'''
+        '''Cancel all uncompleted scheduled tasks and jobs.'''
         raise NotImplementedError
 
     def notification_handler(self, method):
@@ -401,7 +401,7 @@ class RPCProcessor(object):
             remaining -= 1
             if not remaining:
                 message = self.protocol.batch_message_from_parts(parts)
-                self.send_message(message)
+                self.helper.send_message(message)
 
         parts = []
         remaining = len([item for item in batch
@@ -448,6 +448,11 @@ class RPCProcessor(object):
             self.logger.debug('response to unsent batch request: %s',
                               repr(batch))
 
+    def _remove(self, request):
+        '''If it completed any way other than via a response, it will still
+        be in our requests set.'''
+        self.requests.pop(request.request_id, None)
+
     # External API - methods for use by a session layer
     def message_received(self, message):
         '''Analyse an incoming message and queue it for processing.
@@ -457,7 +462,7 @@ class RPCProcessor(object):
         '''
         item = self.protocol.message_to_item(message)
         if isinstance(item, RPCRequest):
-            self._process_request(item, self.send_message)
+            self._process_request(item, self.helper.send_message)
         elif isinstance(item, RPCResponse):
             self._process_response(item)
         else:
@@ -473,7 +478,8 @@ class RPCProcessor(object):
         '''
         if isinstance(request, RPCRequestOut):
             self.requests[request.request_id] = request
-        self.send_message(self.protocol.request_message(request))
+            request.add_done_callback(self._remove)
+        self.helper.send_message(self.protocol.request_message(request))
 
     def send_batch(self, batch):
         '''Call when sending a batch request.  Unless it is all notifications,
@@ -481,7 +487,7 @@ class RPCProcessor(object):
         '''
         if batch.request_ids:
             self.requests[batch.request_ids] = batch
-        self.send_message(self.protocol.batch_message(batch))
+        self.helper.send_message(self.protocol.batch_message(batch))
 
     def all_requests(self):
         '''Returns an iterable of all requests that have not yet completed.

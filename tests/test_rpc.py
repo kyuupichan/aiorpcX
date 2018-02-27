@@ -1015,6 +1015,7 @@ def test_direct_set_etc():
     requests[3].set_exception(ValueError())
     rpc.yield_to_loop()   # Process done functions
     assert done == {requests[n].request_id for n in range(len(requests))}
+    assert not rpc.requests
 
 
 def test_odd_calls():
