@@ -26,7 +26,7 @@
 '''RPC message processing, independent of transport and RPC protocol.'''
 
 __all__ = ('RPCRequest', 'RPCRequestOut', 'RPCResponse', 'RPCBatch',
-           'RPCError', 'RPCBatchBuilder', 'RPCProcessor')
+           'RPCError', 'RPCBatchBuilder', 'RPCHelperBase', 'RPCProcessor')
 
 from asyncio import Future, CancelledError
 from collections import deque
@@ -188,6 +188,50 @@ class RPCBatchBuilder(object):
         self.requests.append(request)
 
 
+class RPCHelperBase(object):
+    '''Abstract base class of an object that handles RPC requests, job
+    queueing and message sending for RPCProcessor.'''
+
+    def send_message(self, message):
+        '''Called when there is a message to send over the network.  The
+        message is unframed.  It might be empty, in which case it
+        should be ignored.
+
+        The derived class may want to queue several messages and send
+        them as a batch, or delay / throttle the sends in some way.
+        '''
+        raise NotImplementedError
+
+    def add_coroutine(self, coro, on_done):
+        '''Schedule a coroutine as an asyncio task.
+
+        If on_done is not None, call on_done(task).'''
+        raise NotImplementedError
+
+    def add_job(self, job):
+        '''Schedule a synchronous function call.'''
+        raise NotImplementedError
+
+    def cancel_all(self):
+        '''Cancel all scheduled tasks and jobs.'''
+        raise NotImplementedError
+
+    def notification_handler(self, method):
+        '''Return the handler for the given notification.
+
+        The handler can be synchronous or asynchronous.  When called
+        the return value is ignored.
+        '''
+        return None
+
+    def request_handler(self, method):
+        '''Return the handler for the given request method.
+
+        The handler can be synchronous or asynchronous.  The return value
+        is sent as an RPC response.'''
+        return None
+
+
 class RPCProcessor(object):
     '''Handles RPC message processing.
 
@@ -195,12 +239,10 @@ class RPCProcessor(object):
     responses and notifications.
     '''
 
-    def __init__(self, protocol, job_queue, logger=None):
-        super().__init__()
-        self.logger = logger or logging.getLogger(self.__class__.__name__)
+    def __init__(self, protocol, helper, logger=None):
         self.protocol = protocol
-        # Synchronous and asynchronous deferred job handler
-        self.job_queue = job_queue
+        self.helper = helper
+        self.logger = logger or logging.getLogger(self.__class__.__name__)
         # Sent requests and batch requests awaiting a response.  For an
         # RPCRequestOut object the key is its request ID; for a batch
         # it is its frozenset of request IDs
@@ -264,9 +306,9 @@ class RPCProcessor(object):
         # Let through any exceptions raised when determining the handler
         request_id = request.request_id
         if request_id is None:
-            handler = self.notification_handler(method)
+            handler = self.helper.notification_handler(method)
         else:
-            handler = self.request_handler(method)
+            handler = self.helper.request_handler(method)
         if not handler:
             raise self.protocol.method_not_found(f'unknown method "{method}"')
 
@@ -335,14 +377,14 @@ class RPCProcessor(object):
                     self._evaluate(request, task.result)
                 else:
                     self._evaluate_and_send(request, task.result, send_func)
-            self.job_queue.add_coroutine(rpc_call(), on_done)
+            self.helper.add_coroutine(rpc_call(), on_done)
         else:
             if request.request_id is None:
                 job = partial(self._evaluate, request, rpc_call)
             else:
                 job = partial(self._evaluate_and_send, request, rpc_call,
                               send_func)
-            self.job_queue.add_job(job)
+            self.helper.add_job(job)
 
     def _process_request_batch(self, batch):
         '''For request batches, queue each request individually except
@@ -445,36 +487,3 @@ class RPCProcessor(object):
         individual requests it is comprised of.
         '''
         return self.requests.values()
-
-    async def close(self):
-        '''Cancel all async jobs; remove all sync jobs.  Wait until all
-        async jobs complete.
-
-        Once closed it can no longer be used.'''
-        self.job_queue.cancel_all()
-        await self.job_queue.wait_for_all()
-        assert not self.requests
-
-    # Methods to be overridden in a derived class
-    def send_message(self, message):
-        '''Called when there is a message ready to send over the network.  The
-        message is unframed.  It might be empty, in which case it
-        should be ignored.
-
-        The derived class may want to queue several messages and send
-        them as a batch, or delay / throttle the sends in some way.
-        '''
-
-    def notification_handler(self, method):
-        '''Return the handler for the given notification.
-
-        The handler can be synchronous or asynchronous.  The return
-        value is ignored.'''
-        return None
-
-    def request_handler(self, method):
-        '''Return the handler for the given request method.
-
-        The handler can be synchronous or asynchronous.  The return value
-        is sent as an RPC response.'''
-        return None

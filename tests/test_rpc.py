@@ -136,6 +136,24 @@ def test_RPCBatch():
     assert repr(batch) == "RPCBatch([RPCResponse(6, 2)])"
 
 
+def test_RPCHelperBase():
+
+    class MyHelper(RPCHelperBase):
+        pass
+
+    helper = MyHelper()
+    with pytest.raises(NotImplementedError):
+        helper.send_message(b'')
+    with pytest.raises(NotImplementedError):
+        helper.add_coroutine(None, None)
+    with pytest.raises(NotImplementedError):
+        helper.add_job(None)
+    with pytest.raises(NotImplementedError):
+        helper.cancel_all()
+    assert helper.notification_handler('n') is None
+    assert helper.request_handler('n') is None
+
+
 def test_batch_builder():
 
     batch = None
@@ -170,12 +188,34 @@ class MyRPCProcessor(RPCProcessor):
     def __init__(self, protocol=None):
         protocol = protocol or JSONRPCv2
         loop = asyncio.get_event_loop()
-        super().__init__(protocol, JobQueue(loop), logger=self)
+        super().__init__(protocol, self, logger=self)
+        self.job_queue = JobQueue(loop)
         self.responses = deque()
         self.debug_messages = []
         self.debug_message_count = 0
         self.error_messages = []
         self.error_message_count = 0
+        self.add_coroutine = self.job_queue.add_coroutine
+        self.add_job = self.job_queue.add_job
+        self.cancel_all = self.job_queue.cancel_all
+
+    # RPCHelper methods
+    def send_message(self, message):
+        self.responses.append(message)
+
+    def notification_handler(self, method):
+        if method == 'bad_notification':
+            made_bad_notification
+        return getattr(self, f'on_{method}', None)
+
+    def request_handler(self, method):
+        if method == 'bad_request':
+            made_bad_request
+        if method == 'partial_add_async':
+            return partial(self.on_add_async, 100)
+        return getattr(self, f'on_{method}', None)
+
+    # RPCHelper methods -- end
 
     def process_all(self):
         # 640 seconds is enough for anyone
@@ -190,9 +230,6 @@ class MyRPCProcessor(RPCProcessor):
         queue = self.job_queue
         queue.loop.run_until_complete(queue.wait_for_all())
         assert not queue.tasks
-
-    def send_message(self, message):
-        self.responses.append(message)
 
     def consume_one_response(self):
         while self.responses:
@@ -291,18 +328,6 @@ class MyRPCProcessor(RPCProcessor):
         self.error_messages.clear()
         self.error_message_count = 0
 
-    def notification_handler(self, method):
-        if method == 'bad_notification':
-            made_bad_notification
-        return getattr(self, f'on_{method}', None)
-
-    def request_handler(self, method):
-        if method == 'bad_request':
-            made_bad_request
-        if method == 'partial_add_async':
-            return partial(self.on_add_async, 100)
-        return getattr(self, f'on_{method}', None)
-
     def on_echo(self, arg):
         return arg
 
@@ -350,9 +375,6 @@ class MyRPCProcessor(RPCProcessor):
 
 
 def test_basic():
-    rpc = RPCProcessor(None, None)
-    assert rpc.request_handler('method') is None
-    assert rpc.notification_handler('method') is None
     rpc = MyRPCProcessor()
     # With no messages added, there is nothing to do
     assert rpc.all_done()
@@ -912,7 +934,7 @@ def test_batch_response_bad():
     assert rpc.all_done()
 
 
-def test_close():
+def test_cancellation():
     '''Tests cancelling async requests.'''
     rpc = MyRPCProcessor()
     loop = asyncio.get_event_loop()
@@ -924,9 +946,9 @@ def test_close():
     # before the cancellation is effected, probably because the event
     # loop doesn't get a look-in.  So make the task one that gives
     # control to the event loop directly
-    rpc.add_request(RPCRequest('sleep', [1], 0))
-
-    loop.run_until_complete(rpc.close())
+    rpc.add_request(RPCRequest('add_async', [1], 0))
+    rpc.cancel_all()
+    rpc.wait()
 
     # Consume the empty response caused by cancellation but do not return
     # it.
@@ -935,7 +957,7 @@ def test_close():
 
     rpc = MyRPCProcessor()
     rpc.add_batch(RPCBatch([
-        RPCRequest('sleep', [1], 0),
+        RPCRequest('add_async', [1], 0),
         RPCRequest('add', [50], 2),
     ]))
 
@@ -946,7 +968,8 @@ def test_close():
     assert not rpc.responses
     assert not rpc.job_queue.jobs
 
-    loop.run_until_complete(rpc.close())
+    rpc.cancel_all()
+    rpc.wait()
 
     # This tests that the batch is sent and not still waiting.
     # The single response is that of the batch.  It might contain
