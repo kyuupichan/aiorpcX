@@ -46,7 +46,10 @@ class RPCRequest(object):
 
     def __init__(self, method, args, request_id):
         self.method = method
-        self.args = args
+        if args is None:
+            self.args = []
+        else:
+            self.args = args
         self.request_id = request_id
         # Ill-formed requests for which the protocol couldn't
         # determine a meaning pass an RPCError as their method
@@ -179,11 +182,11 @@ class RPCBatchBuilder(object):
             batch = RPCBatch(self.requests)
             self.on_done(batch)
 
-    def add_request(self, handler, method, args=[]):
+    def add_request(self, handler, method, args=None):
         request = RPCRequestOut(method, args, handler)
         self.requests.append(request)
 
-    def add_notification(self, method, args=[]):
+    def add_notification(self, method, args=None):
         request = RPCRequest(method, args, None)
         self.requests.append(request)
 

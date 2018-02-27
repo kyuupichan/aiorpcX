@@ -31,12 +31,17 @@ def test_RPCRequest():
     assert request.request_id is None
     assert request.is_notification()
     assert repr(request) == "RPCRequest('foo', [], None)"
-    request = RPCRequest('add', {}, 0)
-    assert request.method == 'add'
-    assert request.args == {}
-    assert request.request_id == 0
-    assert not request.is_notification()
-    assert repr(request) == "RPCRequest('add', {}, 0)"
+    # Check {} is preserved (different call semantics)
+    for request in [RPCRequest('add', {}, 0), RPCRequestOut('add', {}, None)]:
+        assert request.method == 'add'
+        assert request.args == {}
+        request = RPCRequest('add', {}, 0)
+    # Check None gives []
+    for request in [RPCRequest('add', None, 0),
+                    RPCRequestOut('add', None, None)]:
+        request = RPCRequest('add', None, 0)
+        assert request.method == 'add'
+        assert request.args == []
 
     loop = asyncio.get_event_loop()
     # Result setting
@@ -850,6 +855,8 @@ def test_all_notification_batch():
 
     # Now process the request jobs, generating queued response messages
     rpc.process_all()
+
+    print(rpc.responses)
 
     # There is no response!
     assert rpc.all_done()
