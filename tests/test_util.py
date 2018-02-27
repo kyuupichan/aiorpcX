@@ -96,7 +96,7 @@ def test_job_queue():
 
     # Synchronous jobs
     logger = MyLogger('test')
-    jq = JobQueue(asyncio.get_event_loop(), logger)
+    jq = JobQueue(asyncio.get_event_loop(), logger=logger)
     jq.add_job(job1)
     assert jq
     assert len(jq) == 1
@@ -208,7 +208,7 @@ def test_job_queue():
 
 def test_jq_cancellation():
     logger = MyLogger('test')
-    jq = JobQueue(asyncio.get_event_loop(), logger)
+    jq = JobQueue(asyncio.get_event_loop(), logger=logger)
 
     # Async and sync jobs
     acounter = adone = acancelled = counter = 0

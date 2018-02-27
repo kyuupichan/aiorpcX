@@ -82,8 +82,7 @@ def signature_info(func):
 class JobQueue(object):
     '''A JobQueue for use with a loop framework such as asyncio.'''
 
-    def __init__(self, loop, logger=None):
-        super().__init__()
+    def __init__(self, loop, *, logger=None):
         self.loop = loop
         self.logger = logger or logging.getLogger(self.__class__.__name__)
         self.tasks = set()
