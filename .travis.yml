@@ -1,0 +1,12 @@
+dist: trusty
+language: python
+python:
+  - "3.6"
+# command to install dependencies
+install:
+  - pip install -e .
+  - pip install pytest-cov
+  - pip install python-coveralls
+# command to run tests
+script: pytest --cov=aiorpcx
+after_success: coveralls
