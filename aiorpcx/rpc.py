@@ -306,23 +306,15 @@ class RPCProcessor(object):
                                   repr(request))
             return self.protocol.internal_error(request.request_id)
 
-    def _evaluate_and_send(self, request, func, send_func):
-        '''Like _evaluate, but convert the result to bytes and pass them
-        to send_func.
-
-        send_func is always called because batches need to count completed
-        responses.  Id the result is a CancelledError then
-        b'' is sent.
-        '''
-        result = self._evaluate(request, func)
+    def _result_to_message(self, result, request_id):
+        '''Convert an RPC call result from _evalute to a message.'''
         if isinstance(result, RPCError):
-            result_message = self.protocol.error_message(result)
+            return self.protocol.error_message(result)
         elif isinstance(result, CancelledError):
-            result_message = b''
+            return b''
         else:
-            response = RPCResponse(result, request.request_id)
-            result_message = self.protocol.response_message(response)
-        send_func(result_message)
+            response = RPCResponse(result, request_id)
+            return self.protocol.response_message(response)
 
     def _rpc_call(self, request):
         '''Return a partial function call that calls the RPC function
@@ -402,22 +394,20 @@ class RPCProcessor(object):
                 send_func(self.protocol.error_message(rpc_call))
             return
 
+        def evaluate_send(func):
+            result = self._evaluate(request, func)
+            if request.request_id is not None:
+                send_func(self._result_to_message(result, request.request_id))
+
+        def on_async_done(task):
+            evaluate_send(task.result)
+
         # Handling depends on whether the handler is async or not.
         # Notifications just evaluate the RPC call; requests send the result.
         if is_async_call(rpc_call):
-            def on_done(task):
-                if request.request_id is None:
-                    self._evaluate(request, task.result)
-                else:
-                    self._evaluate_and_send(request, task.result, send_func)
-            self.helper.add_coroutine(rpc_call(), on_done)
+            self.helper.add_coroutine(rpc_call(), on_async_done)
         else:
-            if request.request_id is None:
-                job = partial(self._evaluate, request, rpc_call)
-            else:
-                job = partial(self._evaluate_and_send, request, rpc_call,
-                              send_func)
-            self.helper.add_job(job)
+            self.helper.add_job(partial(evaluate_send, rpc_call))
 
     def _process_request_batch(self, batch):
         '''For request batches, queue each request individually except
