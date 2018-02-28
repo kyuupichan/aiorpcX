@@ -447,15 +447,15 @@ class RPCProcessor(object):
         if request:
             self._handle_request_response(request, response)
         else:
-            self.logger.debug('response to unsent or completed request: %s',
+            self.logger.debug('response to unsent or forced request: %s',
                               repr(response))
 
     def _process_response_batch(self, batch):
         request_ids = batch.request_ids()
         batch_request = self.requests.pop(request_ids, None)
         if batch_request:
-            requests_by_id = {item.request_id: item for item in batch_request
-                              if item.request_id is not None}
+            requests_by_id = {item.request_id: item
+                              for item in batch_request.requests()}
             for response in batch:
                 request_id = response.request_id
                 if request_id is None:
@@ -465,8 +465,8 @@ class RPCProcessor(object):
                     request = requests_by_id[request_id]
                     self._handle_request_response(request, response)
         else:
-            self.logger.debug('response to unsent batch request: %s',
-                              repr(batch))
+            self.logger.debug('response to unsent or forced '
+                              'batch request: %s', repr(batch))
 
     # External API - methods for use by a session layer
     def message_received(self, message):

@@ -873,7 +873,7 @@ def test_batch_response_bad():
     parts = [rpc.protocol.response_message(response) for response in responses]
     rpc.message_received(rpc.protocol.batch_message_from_parts(parts))
 
-    rpc.expect_debug_message('unsent batch request')
+    rpc.expect_debug_message('unsent or forced batch request')
     assert not rpc.error_messages
     assert not handled
     rpc.debug_clear()
@@ -890,7 +890,7 @@ def test_batch_response_bad():
     rpc.message_received(response)
     rpc.yield_to_loop()
     assert sorted(handled) == ['add', 'echo']
-    rpc.expect_debug_message('unsent batch request')
+    rpc.expect_debug_message('unsent or forced batch request')
 
     # Now send the batch again.  Create a response with the correct IDs
     # but an additional response with a None id.
