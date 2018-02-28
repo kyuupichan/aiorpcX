@@ -2,7 +2,8 @@ from itertools import chain, combinations
 import json
 import pytest
 
-from aiorpcx import *
+from aiorpcx.jsonrpc import *
+from aiorpcx.rpc import RPCRequest, RPCResponse, RPCBatch, RPCError
 
 rpcs = [
     JSONRPCv1,

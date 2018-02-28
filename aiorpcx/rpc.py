@@ -25,8 +25,7 @@
 
 '''RPC message processing, independent of transport and RPC protocol.'''
 
-__all__ = ('RPCRequest', 'RPCRequestOut', 'RPCResponse', 'RPCBatch',
-           'RPCError', 'RPCBatchBuilder', 'RPCHelperBase', 'RPCProcessor')
+__all__ = ()
 
 from asyncio import Future, CancelledError
 from collections import deque
@@ -149,9 +148,13 @@ class RPCBatch(object):
         assert items
         assert (all(isinstance(item, RPCRequest) for item in items)
                 or all(isinstance(item, RPCResponse) for item in items))
-        # A frozenset of all request IDs in the batch ignoring notifications
-        self.request_ids = frozenset(item.request_id for item in self
-                                     if item.request_id is not None)
+
+    def request_ids(self):
+        '''Return a frozenset of all request IDs in the batch, ignoring
+        notifications.
+        '''
+        return frozenset(item.request_id for item in self
+                        if item.request_id is not None)
 
     def is_request_batch(self):
         return isinstance(self.items[0], RPCRequest)
@@ -166,29 +169,19 @@ class RPCBatch(object):
         return f'RPCBatch({self.items!r})'
 
 
-class RPCBatchBuilder(object):
+class RPCBatchOut(RPCBatch):
 
-    def __init__(self, on_done):
-        self.requests = []
-        self.on_done = on_done
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        if exc_type is None:
-            if not self.requests:
-                raise RuntimeError('request batch cannot be empty')
-            batch = RPCBatch(self.requests)
-            self.on_done(batch)
+    def __init__(self):
+        # We don't call the base class constructor
+        self.items = []
 
     def add_request(self, handler, method, args=None):
         request = RPCRequestOut(method, args, handler)
-        self.requests.append(request)
+        self.items.append(request)
 
     def add_notification(self, method, args=None):
         request = RPCRequest(method, args, None)
-        self.requests.append(request)
+        self.items.append(request)
 
 
 class RPCHelperBase(object):
@@ -431,7 +424,7 @@ class RPCProcessor(object):
                               repr(response))
 
     def _process_response_batch(self, batch):
-        request_ids = batch.request_ids
+        request_ids = batch.request_ids()
         batch_request = self.requests.pop(request_ids, None)
         if batch_request:
             requests_by_id = {item.request_id: item for item in batch_request
@@ -473,8 +466,10 @@ class RPCProcessor(object):
                 self._process_response_batch(item)
 
     def send_request(self, request):
-        '''Call when sending a request.  If it is not a notification then save
-        it so that an incoming response can be handled.
+        '''Send a request.
+
+        If it is not a notification record the request ID so that an
+        incoming response can be handled.
         '''
         if isinstance(request, RPCRequestOut):
             self.requests[request.request_id] = request
@@ -482,11 +477,17 @@ class RPCProcessor(object):
         self.helper.send_message(self.protocol.request_message(request))
 
     def send_batch(self, batch):
-        '''Call when sending a batch request.  Unless it is all notifications,
-        save the batch so that an incoming batch response can be handled.
+        '''Send a batch request.
+
+        Unless it is all notifications, record the request IDs of the
+        batch memebers so that an incoming batch response can be
+        handled.
         '''
-        if batch.request_ids:
-            self.requests[batch.request_ids] = batch
+        if not batch:
+            raise RuntimeError('request batch cannot be empty')
+        request_ids = batch.request_ids()
+        if request_ids:
+            self.requests[request_ids] = batch
         self.helper.send_message(self.protocol.batch_message(batch))
 
     def all_requests(self):

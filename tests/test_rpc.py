@@ -10,7 +10,8 @@ import traceback
 import pytest
 
 from aiorpcx import *
-
+from aiorpcx.rpc import (RPCRequest, RPCRequestOut, RPCResponse, RPCBatch,
+                         RPCBatchOut, RPCError, RPCHelperBase, RPCProcessor)
 
 def test_RPCRequest():
     request = RPCRequestOut('method', [1], None)
@@ -125,8 +126,8 @@ def test_RPCBatch():
     assert len(batch) == len(requests)
     # test iter()
     assert requests == list(batch)
-    assert batch.request_ids == {1, 0}
-    assert isinstance(batch.request_ids, frozenset)
+    assert batch.request_ids() == {1, 0}
+    assert isinstance(batch.request_ids(), frozenset)
     assert repr(batch) == ("RPCBatch([RPCRequest('method', [], 0), "
                            "RPCRequest('t', [1], 1)])")
 
@@ -136,8 +137,7 @@ def test_RPCBatch():
     assert len(batch) == len(responses)
     # test iter()
     assert responses == list(batch)
-    assert batch.request_ids == {2}
-    assert isinstance(batch.request_ids, frozenset)
+    assert batch.request_ids() == {2}
     assert repr(batch) == "RPCBatch([RPCResponse(6, 2)])"
 
 
@@ -159,31 +159,29 @@ def test_RPCHelperBase():
     assert helper.request_handler('n') is None
 
 
-def test_batch_builder():
-
-    batch = None
-
-    def batch_done(result):
-        nonlocal batch
-        batch = result
-
-    with RPCBatchBuilder(batch_done) as b:
-        b.add_notification("method")
-        b.add_request(None, "method")
-        b.add_request(None, "method", [])
-        b.add_notification("method", [])
-        b.add_request(None, "method", {})
-        b.add_notification("method", [])
-
-    assert len(batch) == 6
-    assert len(batch.request_ids) == 3
-    low = min(batch.request_ids)
-    high = low + len(batch.request_ids)
-    assert batch.request_ids == frozenset(range(low, high))
-
+def test_RPCBatchOut():
+    rpc = MyRPCProcessor()
+    batch = RPCBatchOut()
+    assert isinstance(batch, RPCBatch)
     with pytest.raises(RuntimeError):
-        with RPCBatchBuilder(batch_done) as b:
-            pass
+        rpc.send_batch(batch)
+
+    batch.add_notification("method")
+    batch.add_request(None, "method")
+    batch.add_request(None, "method", [])
+    batch.add_notification("method", [])
+    batch.add_request(None, "method", {})
+    batch.add_notification("method", [])
+
+    request_ids = batch.request_ids()
+    assert len(batch) == 6
+    assert len(request_ids) == 3
+    low = min(request_ids)
+    high = low + len(request_ids)
+    assert request_ids == frozenset(range(low, high))
+    # Simple send works
+    rpc.send_batch(batch)
+    assert request_ids in rpc.requests
 
 # RPC processor tests
 
@@ -775,18 +773,14 @@ def test_batch_round_trip():
         assert result.code == rpc.protocol.INVALID_ARGS
         handled.append('bad_echo')
 
-    def send_and_receive(batch):
-        nonlocal batch_message
-        # Send the batch
-        rpc.send_batch(batch)
-        batch_message = rpc.responses.pop()
-
-    with RPCBatchBuilder(send_and_receive) as b:
-        b.add_request(handle_add, 'add', [1, 5, 10])
-        b.add_request(handle_add, 'add_async', [1, 5, 10])
-        b.add_request(handle_bad_echo, 'echo', [])    # An erroneous request
-        b.add_notification('add')   # Erroneous; gets swallowed anyway
-        b.add_request(handle_echo, 'echo', ["ping"])
+    batch = RPCBatchOut()
+    batch.add_request(handle_add, 'add', [1, 5, 10])
+    batch.add_request(handle_add, 'add_async', [1, 5, 10])
+    batch.add_request(handle_bad_echo, 'echo', [])    # An erroneous request
+    batch.add_notification('add')   # Erroneous; gets swallowed anyway
+    batch.add_request(handle_echo, 'echo', ["ping"])
+    rpc.send_batch(batch)
+    batch_message = rpc.responses.pop()
 
     assert not rpc.debug_messages
     assert not rpc.error_messages
@@ -844,14 +838,12 @@ def test_some_invalid_requests():
 def test_all_notification_batch():
     rpc = MyRPCProcessor()
 
-    def send_and_receive(batch):
-        rpc.send_batch(batch)
-        # Fake reeiving it
-        rpc.message_received(rpc.responses.pop())
-
-    with RPCBatchBuilder(send_and_receive) as b:
-        b.add_notification('echo', ["ping"])
-        b.add_notification('add')   # Erroneous; gets swallowed anyway
+    batch = RPCBatchOut()
+    batch.add_notification('echo', ["ping"])
+    batch.add_notification('add')   # Erroneous; gets swallowed anyway
+    rpc.send_batch(batch)
+    # Fake reeiving it
+    rpc.message_received(rpc.responses.pop())
 
     # Now process the request jobs, generating queued response messages
     rpc.process_all()
@@ -865,26 +857,21 @@ def test_all_notification_batch():
 def test_batch_response_bad():
     rpc = MyRPCProcessor()
     handled = []
-    request_ids = None
-    batch_message = None
 
     def handler(request):
         handled.append(request.method)
 
-    def send_and_receive(batch):
-        nonlocal request_ids, batch_message
-        request_ids = list(batch.request_ids)
-        rpc.send_batch(batch)
-        batch_message = rpc.responses.pop()
-
     def send_batch():
-        with RPCBatchBuilder(send_and_receive) as b:
-            b.add_request(handler, 'add', [1, 5, 10])
-            b.add_request(handler, 'echo', ["ping"])
+        batch = RPCBatchOut()
+        batch.add_request(handler, 'add', [1, 5, 10])
+        batch.add_request(handler, 'echo', ["ping"])
+        rpc.send_batch(batch)
+        return batch
 
-    send_batch()
+    batch = send_batch()
+
     # Fake receiving it
-    rpc.message_received(batch_message)
+    rpc.message_received(rpc.responses.pop())
 
     # Now process the request jobs, generating queued response messages
     rpc.process_all()
@@ -895,7 +882,7 @@ def test_batch_response_bad():
     # and a bad ID
     responses = [
         RPCResponse(5, -1),
-        RPCResponse(6, request_ids[0])
+        RPCResponse(6, list(batch.request_ids())[0])
     ]
     parts = [rpc.protocol.response_message(response) for response in responses]
     rpc.message_received(rpc.protocol.batch_message_from_parts(parts))
@@ -923,10 +910,12 @@ def test_batch_response_bad():
     # but an additional response with a None id.
     handled.clear()
     rpc.debug_clear()
-    send_batch()
+    batch = send_batch()
+    rpc.responses.pop()
     assert rpc.all_done()
 
-    responses = [RPCResponse(5, request_id) for request_id in request_ids]
+    responses = [RPCResponse(5, request_id)
+                 for request_id in batch.request_ids()]
     responses.insert(1, RPCResponse(5, None))
     parts = [rpc.protocol.response_message(response) for response in responses]
     rpc.message_received(rpc.protocol.batch_message_from_parts(parts))
@@ -980,7 +969,7 @@ def test_cancellation():
 
     # This tests that the batch is sent and not still waiting.
     # The single response is that of the batch.  It might contain
-    # synchronous job.  Should we improve this?
+    # synchronous jobatch.  Should we improve this?
     response, = rpc.consume_responses()
     batch = rpc.protocol.message_to_item(response)
     # The sleep should not have completed and been swallowed
