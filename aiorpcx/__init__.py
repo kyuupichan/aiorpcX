@@ -8,5 +8,5 @@ __all__ = (framing.__all__ +
            rpc.__all__ +
            util.__all__)
 
-_version = (0, 1)
+_version = (0, 2)
 _version_str = '.'.join(str(part) for part in _version)

@@ -71,8 +71,7 @@ class RPCRequestOut(RPCRequest, Future):
     result() method.
 
     The request can be await-ed on and/or it can be given a handler to
-    call on completion.  If both, the handler is called before the
-    await returns.
+    call on completion.
     '''
 
     _next_id = 0
@@ -184,12 +183,12 @@ class RPCBatch(object):
 class RPCBatchOut(RPCBatch, Future):
     '''Represents an outgoing RPC batch request.
 
-    You can specify a callback for each individual request in the batch,
-    and/or a callback for the batch as a whole (via its future).
+    You can specify a callback to call when all requests in the batch
+    have completed; it is passed the batch object.  The batch object
+    does not have a meaningful result.
 
-    The results can be
-
-    The batch request can be await-ed.
+    The batch can be await-ed on and/or it can be given a handler to
+    call on completion.  This is also true for its member requests.
     '''
     def __init__(self, on_done=None, *, loop=None):
         '''Create an outgoig batch request.  on_done can be None.'''
