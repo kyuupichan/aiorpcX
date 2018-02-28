@@ -386,24 +386,24 @@ class RPCProcessor(object):
         # Wrap the call to _rpc_call in _evaluate in order to
         # correctly handle exceptions it might raise.
         rpc_call = self._evaluate(request, partial(self._rpc_call, request))
+        request_id = request.request_id
 
         if isinstance(rpc_call, RPCError):
-            # Always send responses to ill-formed requests
-            if request.request_id is not None or isinstance(request.method,
-                                                            RPCError):
+            # Always send responses to ill-formed notifications
+            if request_id is not None or isinstance(request.method, RPCError):
                 send_func(self.protocol.error_message(rpc_call))
             return
 
+        # Handling depends on whether the handler is async or not.
+        # Notifications just evaluate the RPC call; requests send the result.
         def evaluate_send(func):
             result = self._evaluate(request, func)
-            if request.request_id is not None:
-                send_func(self._result_to_message(result, request.request_id))
+            if request_id is not None:
+                send_func(self._result_to_message(result, request_id))
 
         def on_async_done(task):
             evaluate_send(task.result)
 
-        # Handling depends on whether the handler is async or not.
-        # Notifications just evaluate the RPC call; requests send the result.
         if is_async_call(rpc_call):
             self.helper.add_coroutine(rpc_call(), on_async_done)
         else:
