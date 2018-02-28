@@ -551,5 +551,4 @@ class RPCProcessor(object):
             # cancel() is a no-op if the future is done
             request.cancel()
         await sleep(0)
-        if self.requests:
-            self.logger.error(f'{len(self.requests)} remain after closing')
+        assert not self.requests

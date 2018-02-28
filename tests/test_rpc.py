@@ -18,6 +18,7 @@ from aiorpcx.rpc import (RPCRequest, RPCRequestOut, RPCResponse, RPCBatch,
 class LogError(Exception):
     pass
 
+
 class AsyncioLogError(Exception):
     pass
 
@@ -1302,10 +1303,10 @@ def test_close():
     # Test close cancels sync jobs scheduled for an incoming request
     # This needs to be done inside an async function as otherwise the
     # loop will have had a chance to schedule the task...
-    rpc = MyRPCProcessor()
     async def add_request_and_cancel():
         rpc.add_request(RPCRequest('add', [1], 0))
         await rpc.close()
         rpc.process_all()
         assert not rpc.responses
+    rpc = MyRPCProcessor()
     loop.run_until_complete(add_request_and_cancel())
