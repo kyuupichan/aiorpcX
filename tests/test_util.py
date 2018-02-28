@@ -229,6 +229,13 @@ def test_jq_cancellation():
         nonlocal counter
         counter += 1
 
+    # Test ajob and sjob work()
+    sjob()
+    assert counter == 1
+    jq.loop.run_until_complete(ajob())
+    assert acounter == 1
+    counter = acounter = 0
+
     jq.add_coroutine(ajob(), ajob_done)
     assert len(jq) == 1
     jq.add_job(sjob)

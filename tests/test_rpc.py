@@ -1,5 +1,6 @@
 import asyncio
 from collections import deque
+import contextlib
 from functools import partial
 import json
 import logging
@@ -12,6 +13,11 @@ import pytest
 from aiorpcx import *
 from aiorpcx.rpc import (RPCRequest, RPCRequestOut, RPCResponse, RPCBatch,
                          RPCBatchOut, RPCError, RPCHelperBase, RPCProcessor)
+
+
+class AsyncioLogError(Exception):
+    pass
+
 
 def test_RPCRequest():
     request = RPCRequestOut('method', [1], None)
@@ -120,21 +126,26 @@ def test_RPCBatch():
     with pytest.raises(AssertionError):
         RPCBatch([RPCError(0, 'message', 0), RPCResponse(6, 0)])
 
-    requests = [RPCRequest('method', [], 0), RPCRequest('t', [1], 1)]
+    requests = [RPCRequest('method', [], 0),
+                RPCRequest('foo', [], None),
+                RPCRequest('t', [1], 1)]
     batch = RPCBatch(requests)
     assert batch.is_request_batch()
     assert len(batch) == len(requests)
+    assert list(batch.requests()) == [requests[0], requests[2]]
     # test iter()
     assert requests == list(batch)
     assert batch.request_ids() == {1, 0}
     assert isinstance(batch.request_ids(), frozenset)
     assert repr(batch) == ("RPCBatch([RPCRequest('method', [], 0), "
+                           "RPCRequest('foo', [], None), "
                            "RPCRequest('t', [1], 1)])")
 
     responses = [RPCResponse(6, 2)]
     batch = RPCBatch(responses)
     assert not batch.is_request_batch()
     assert len(batch) == len(responses)
+    assert list(batch.requests()) == responses
     # test iter()
     assert responses == list(batch)
     assert batch.request_ids() == {2}
@@ -167,10 +178,10 @@ def test_RPCBatchOut():
         rpc.send_batch(batch)
 
     batch.add_notification("method")
-    batch.add_request(None, "method")
-    batch.add_request(None, "method", [])
+    batch.add_request("method")
+    batch.add_request("method", [])
     batch.add_notification("method", [])
-    batch.add_request(None, "method", {})
+    batch.add_request("method", {})
     batch.add_notification("method", [])
 
     request_ids = batch.request_ids()
@@ -201,6 +212,11 @@ class MyRPCProcessor(RPCProcessor):
         self.add_coroutine = self.job_queue.add_coroutine
         self.add_job = self.job_queue.add_job
         self.cancel_all = self.job_queue.cancel_all
+        # Ensure our operation causes no unwanted errors
+        alogger = logging.getLogger('asyncio')
+        alogger.warning = self.asyncio_log
+        alogger.error = self.asyncio_log
+        self._allow_asyncio_logs = False
 
     # RPCHelper methods
     def send_message(self, message):
@@ -309,6 +325,10 @@ class MyRPCProcessor(RPCProcessor):
         for message in messages:
             self.message_received(message)
 
+    def asyncio_log(self, message, *args, **kwargs):
+        print(message, args, kwargs)
+        raise AsyncioLogError
+
     def debug(self, message, *args, **kwargs):
         # This is to test log_debug is being called
         self.debug_messages.append(message)
@@ -327,23 +347,14 @@ class MyRPCProcessor(RPCProcessor):
         self.error_message_count += 1
         logging.exception(message, *args, **kwargs)
 
-    def error_clear(self):
-        self.error_messages.clear()
-        self.error_message_count = 0
-
     def on_echo(self, arg):
         return arg
 
     def on_notify(self, x, y, z=0):
-        self.x = x
-        self.y = y
-        self.z = z
+        return x + y + z
 
     def on_raise(self):
         return something
-
-    async def on_sleep(self, time=0):
-        await asyncio.sleep(time)
 
     async def on_raise_async(self):
         return anything
@@ -503,37 +514,6 @@ def test_named_args_bad():
     # Test plural
     rpc.add_request(RPCRequest('notify', {}, 0))
     rpc.expect_error(rpc.protocol.INVALID_ARGS, 'parameters "x", "y"', 0)
-    assert rpc.all_done()
-
-
-def test_handler_that_raises():
-    rpc = MyRPCProcessor()
-
-    rpc.add_requests([
-        RPCRequest('raise', [], 0),
-        RPCRequest('raise', [], None),
-    ])
-
-    rpc.process_all()
-    rpc.expect_internal_error("something", 0)
-    assert rpc.error_message_count == 2
-    assert rpc.all_done()
-
-    rpc.add_request(RPCRequest('raise_async', [], 0))
-    rpc.error_messages.clear()
-    rpc.error_message_count = 0
-    rpc.wait()
-    rpc.expect_internal_error("anything", 0)
-    assert rpc.error_message_count == 1
-    assert rpc.all_done()
-
-    rpc.add_request(RPCRequest('raise_async', [], None))
-    rpc.error_messages.clear()
-    rpc.error_message_count = 0
-    rpc.wait()
-    assert not rpc.responses
-    assert rpc.error_message_count == 1
-    rpc.expect_error_message("anything")
     assert rpc.all_done()
 
 
@@ -774,11 +754,11 @@ def test_batch_round_trip():
         handled.append('bad_echo')
 
     batch = RPCBatchOut()
-    batch.add_request(handle_add, 'add', [1, 5, 10])
-    batch.add_request(handle_add, 'add_async', [1, 5, 10])
-    batch.add_request(handle_bad_echo, 'echo', [])    # An erroneous request
+    batch.add_request('add', [1, 5, 10], handle_add)
+    batch.add_request('add_async', [1, 5, 10], handle_add)
+    batch.add_request('echo', [], handle_bad_echo)    # An erroneous request
     batch.add_notification('add')   # Erroneous; gets swallowed anyway
-    batch.add_request(handle_echo, 'echo', ["ping"])
+    batch.add_request('echo', ["ping"], handle_echo)
     rpc.send_batch(batch)
     batch_message = rpc.responses.pop()
 
@@ -863,8 +843,8 @@ def test_batch_response_bad():
 
     def send_batch():
         batch = RPCBatchOut()
-        batch.add_request(handler, 'add', [1, 5, 10])
-        batch.add_request(handler, 'echo', ["ping"])
+        batch.add_request('add', [1, 5, 10], handler)
+        batch.add_request('echo', ["ping"], handler)
         rpc.send_batch(batch)
         return batch
 
@@ -930,10 +910,146 @@ def test_batch_response_bad():
     assert rpc.all_done()
 
 
-def test_cancellation():
+def test_outgoing_request_cancellation_and_setting():
+    '''Tests cancelling requests.'''
+    rpc = MyRPCProcessor()
+    called = 0
+
+    def on_done(req):
+        nonlocal called
+        called += 1
+
+    request = RPCRequestOut('add_async', [1], on_done)
+    rpc.send_request(request)
+    assert request.request_id in rpc.requests
+    request.cancel()
+    rpc.yield_to_loop()
+    assert called == 1
+    assert request.cancelled()
+    assert not rpc.requests
+    with pytest.raises(asyncio.CancelledError):
+        request.result()
+
+    request = RPCRequestOut('add_async', [1], on_done)
+    rpc.send_request(request)
+    assert request.request_id in rpc.requests
+    request.set_result(4)
+    rpc.yield_to_loop()
+    assert called == 2
+    assert request.result() == 4
+    assert not rpc.requests
+
+    request = RPCRequestOut('add_async', [1], on_done)
+    rpc.send_request(request)
+    assert request.request_id in rpc.requests
+    request.set_exception(ValueError())
+    rpc.yield_to_loop()
+    assert called == 3
+    assert isinstance(request.exception(), ValueError)
+    with pytest.raises(ValueError):
+        request.result()
+    assert not rpc.requests
+
+
+def test_outgoing_batch_request_cancellation_and_setting():
+    '''Tests cancelling outgoing batch requests.'''
+    rpc = MyRPCProcessor()
+    batch_done = request_done = 0
+
+    def on_batch_done(batch):
+        assert isinstance(batch, RPCBatchOut)
+        assert batch.done()
+        nonlocal batch_done
+        batch_done += 1
+
+    def on_request_done(request):
+        assert isinstance(request, RPCRequestOut)
+        assert request.done()
+        nonlocal request_done
+        request_done += 1
+
+    def send_batch():
+        nonlocal batch_done, request_done
+        batch_done = request_done = 0
+        batch = RPCBatchOut(on_batch_done)
+        batch.add_request('add_async', [1], on_request_done)
+        batch.add_request('add_async', [1], on_request_done)
+        batch.add_notification('add_async', [])
+        batch.add_request('add_async', [1], None)
+        rpc.send_batch(batch)
+        return batch
+
+    # First, cancel the bzatch
+    batch = send_batch()
+    batch.cancel()
+    rpc.yield_to_loop()
+    assert batch.cancelled()
+    for request in batch.requests():
+        assert request.cancelled()
+    assert batch_done == 1
+    assert request_done == 2
+    assert not rpc.requests
+
+    # Now set its result
+    batch = send_batch()
+    batch.set_result(1)
+    rpc.yield_to_loop()
+    assert batch.result() == 1
+    for request in batch.requests():
+        assert request.cancelled()
+    assert batch_done == 1
+    assert request_done == 2
+    assert not rpc.requests
+
+    # Now set its exception
+    batch = send_batch()
+    batch.set_exception(ValueError())
+    rpc.yield_to_loop()
+    with pytest.raises(ValueError):
+        batch.result()
+    for request in batch.requests():
+        assert request.cancelled()
+    assert batch_done == 1
+    assert request_done == 2
+    assert not rpc.requests
+
+    # Now set one before cancelling
+    batch = send_batch()
+    batch.items[0].set_result(1)
+    batch.cancel()
+    rpc.yield_to_loop()
+    assert batch.cancelled()
+    assert batch.items[0].result() == 1
+    assert batch.items[1].cancelled()
+    assert batch_done == 1
+    assert request_done == 2
+    assert not rpc.requests
+
+    # Now cancel all manually; check the batch is also flagged done
+    batch = send_batch()
+    for request in batch.requests():
+        request.set_result(0)
+    rpc.yield_to_loop()
+    assert batch.done() and not batch.cancelled()
+    assert len(list(batch.requests())) == 3
+    for request in batch.requests():
+        assert request.result() == 0
+    assert batch_done == 1
+    assert request_done == 2
+    assert batch.result() is False
+    assert not rpc.requests
+
+    # Now send a notification batch.  Assert it is flagged done automatically
+    batch = RPCBatchOut(on_batch_done)
+    batch.add_notification('add_async', [1])
+    rpc.send_batch(batch)
+    assert not rpc.requests
+    assert batch.done()
+
+
+def test_incoming_request_cancellation():
     '''Tests cancelling async requests.'''
     rpc = MyRPCProcessor()
-    loop = asyncio.get_event_loop()
 
     # Simple request.  Note that awaiting on the tasks in the close()
     # method has a different effect to calling
@@ -951,6 +1067,10 @@ def test_cancellation():
     assert not rpc.consume_responses()
     assert rpc.all_done()
 
+
+def test_incoming_batch_request_cancellation():
+    '''Test cancelling incoming batch cancellation, including when
+    partially complete.'''
     rpc = MyRPCProcessor()
     rpc.add_batch(RPCBatch([
         RPCRequest('add_async', [1], 0),
@@ -963,13 +1083,12 @@ def test_cancellation():
     # The sync response is collected by the batch aggregator
     assert not rpc.responses
     assert not rpc.job_queue.jobs
-
     rpc.cancel_all()
     rpc.wait()
 
     # This tests that the batch is sent and not still waiting.
     # The single response is that of the batch.  It might contain
-    # synchronous jobatch.  Should we improve this?
+    # synchronous jobs.  Should we improve this?
     response, = rpc.consume_responses()
     batch = rpc.protocol.message_to_item(response)
     # The sleep should not have completed and been swallowed
@@ -1015,17 +1134,16 @@ def test_odd_calls():
         result = request.result()
         if result == answer:
             handled.append(request.method)
-        else:
-            print("REQUEST: ", request, result)
 
     def error(text, request):
         result = request.result()
         if isinstance(result, RPCError) and text in result.message:
             handled.append(text)
-        else:
-            print("REQUEST: ", request, result)
 
     requests = [
+        # Gives code coverage of notify func
+        RPCRequestOut('notify', [1, 2, 3], partial(expect, 6)),
+        RPCRequestOut('add_many', [1, "b"], partial(error, 'numbers')),
         RPCRequestOut('add_many', [], partial(error, 'requires 1')),
         RPCRequestOut('add_many', [1], partial(expect, 1)),
         RPCRequestOut('add_many', [5, 50, 500], partial(expect, 555)),
@@ -1084,4 +1202,65 @@ def test_odd_calls():
     rpc.yield_to_loop()
     assert len(handled) == len(requests)
 
+    assert rpc.all_done()
+
+
+def test_buggy_done_handler_is_logged():
+    rpc = MyRPCProcessor()
+
+    def on_done(req):
+        raise Exception
+
+    # First for a request
+    request = RPCRequestOut('add_async', [1], on_done)
+    rpc.send_request(request)
+    request.cancel()
+    with pytest.raises(AsyncioLogError):
+        rpc.yield_to_loop()
+
+    # Now a request in a batch
+    batch = RPCBatchOut()
+    batch.add_request('add_async', [1], on_done)
+    rpc.send_batch(batch)
+    batch.items[0].cancel()
+    with pytest.raises(AsyncioLogError):
+        rpc.yield_to_loop()
+
+    # Finally the batch itself
+    batch = RPCBatchOut(on_done)
+    batch.add_request('add_async', [1])
+    rpc.send_batch(batch)
+    batch.cancel()
+    with pytest.raises(AsyncioLogError):
+        rpc.yield_to_loop()
+
+
+def test_buggy_request_handler_is_logged():
+    rpc = MyRPCProcessor()
+
+    rpc.add_requests([
+        RPCRequest('raise', [], 0),
+        RPCRequest('raise', [], None),
+    ])
+
+    rpc.process_all()
+    rpc.expect_internal_error("something", 0)
+    assert rpc.error_message_count == 2
+    assert rpc.all_done()
+
+    rpc.add_request(RPCRequest('raise_async', [], 0))
+    rpc.error_messages.clear()
+    rpc.error_message_count = 0
+    rpc.wait()
+    rpc.expect_internal_error("anything", 0)
+    assert rpc.error_message_count == 1
+    assert rpc.all_done()
+
+    rpc.add_request(RPCRequest('raise_async', [], None))
+    rpc.error_messages.clear()
+    rpc.error_message_count = 0
+    rpc.wait()
+    assert not rpc.responses
+    assert rpc.error_message_count == 1
+    rpc.expect_error_message("anything")
     assert rpc.all_done()
