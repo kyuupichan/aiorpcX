@@ -127,8 +127,9 @@ class JobQueue(object):
         return len(self.tasks) + len(self.jobs)
 
     def cancel_all(self):
-        '''Drop all uncompleted synchronous jobs.  Cancel all uncompleted
-        async tasks.
+        '''Drop all uncompleted synchronous jobs.  Cancel all async tasks -
+        this will fail if the task has already been scheduled for execution
+        or is running in the event loop.
 
         Once cancel_all() is called, adding a syncronous job will be ignored,
         adding an asynchronous job will cause it to be immediately cancelled.

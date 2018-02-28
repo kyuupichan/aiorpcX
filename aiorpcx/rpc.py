@@ -27,7 +27,7 @@
 
 __all__ = ()
 
-from asyncio import Future, CancelledError
+from asyncio import Future, CancelledError, sleep
 from collections import deque
 from functools import partial
 import logging
@@ -537,3 +537,19 @@ class RPCProcessor(object):
         individual requests it is comprised of.
         '''
         return self.requests.values()
+
+    async def close(self):
+        '''Cancel all scheduled tasks and jobs: those for responses to
+        incoming requests, and those waiting for responses to outgoing
+        requests.
+
+        Yields to the event loop so that cancellations and callbacks
+        can be processed before returning.
+        '''
+        self.helper.cancel_all()
+        for request in self.all_requests():
+            # cancel() is a no-op if the future is done
+            request.cancel()
+        await sleep(0)
+        if self.requests:
+            self.logger.error(f'{len(self.requests)} remain after closing')

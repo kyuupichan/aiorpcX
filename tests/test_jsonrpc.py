@@ -230,7 +230,6 @@ def test_response_bad():
     for rpc in rpcs[1:2]:
         # Missing ID
         message = {"result": 2}
-        print("RPC:", rpc)
         item = rpc_message_to_item(rpc, message)
         assert_is_error_response(item, 'id', rpc.INVALID_REQUEST, None)
         message = {"error": {"code": 2, "message": "try harder"}}

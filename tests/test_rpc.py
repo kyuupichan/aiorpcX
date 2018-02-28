@@ -15,6 +15,9 @@ from aiorpcx.rpc import (RPCRequest, RPCRequestOut, RPCResponse, RPCBatch,
                          RPCBatchOut, RPCError, RPCHelperBase, RPCProcessor)
 
 
+class LogError(Exception):
+    pass
+
 class AsyncioLogError(Exception):
     pass
 
@@ -328,6 +331,10 @@ class MyRPCProcessor(RPCProcessor):
     def asyncio_log(self, message, *args, **kwargs):
         print(message, args, kwargs)
         raise AsyncioLogError
+
+    def error(self, message, *args, **kwargs):
+        logging.error(message, *args, **kwargs)
+        raise LogError
 
     def debug(self, message, *args, **kwargs):
         # This is to test log_debug is being called
@@ -828,8 +835,6 @@ def test_all_notification_batch():
     # Now process the request jobs, generating queued response messages
     rpc.process_all()
 
-    print(rpc.responses)
-
     # There is no response!
     assert rpc.all_done()
 
@@ -1264,3 +1269,43 @@ def test_buggy_request_handler_is_logged():
     assert rpc.error_message_count == 1
     rpc.expect_error_message("anything")
     assert rpc.all_done()
+
+
+def test_close():
+    loop = asyncio.get_event_loop()
+    called = 0
+
+    def on_done(req):
+        nonlocal called
+        called += 1
+
+    # Test close cancels an outgoing request
+    rpc = MyRPCProcessor()
+    request = RPCRequestOut('add', [1], on_done)
+    rpc.send_request(request)
+    loop.run_until_complete(rpc.close())
+    assert called == 1
+    assert request.cancelled()
+
+    # Test close cancels an outgoing batch and its requets
+    rpc = MyRPCProcessor()
+    called = 0
+    batch = RPCBatchOut(on_done)
+    batch.add_request('add_async', [2], on_done)
+    batch.add_request('add_async', [3], on_done)
+    rpc.send_batch(batch)
+    loop.run_until_complete(rpc.close())
+    assert called == 3
+    assert batch.cancelled()
+    assert all(request.cancelled() for request in batch)
+
+    # Test close cancels sync jobs scheduled for an incoming request
+    # This needs to be done inside an async function as otherwise the
+    # loop will have had a chance to schedule the task...
+    rpc = MyRPCProcessor()
+    async def add_request_and_cancel():
+        rpc.add_request(RPCRequest('add', [1], 0))
+        await rpc.close()
+        rpc.process_all()
+        assert not rpc.responses
+    loop.run_until_complete(add_request_and_cancel())
