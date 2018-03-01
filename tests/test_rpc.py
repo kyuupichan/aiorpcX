@@ -657,6 +657,7 @@ def test_request_round_trip():
         rpc.message_received(rpc.responses.pop())
 
     # Check all_requests
+    assert isinstance(rpc.all_requests(), list)
     assert set(rpc.all_requests()) == set(req for req in requests
                                           if isinstance(req, RPCRequestOut))
 

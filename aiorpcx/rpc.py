@@ -535,12 +535,12 @@ class RPCProcessor(object):
         self.helper.send_message(self.protocol.batch_message(batch))
 
     def all_requests(self):
-        '''Returns an iterable of all requests that have not yet completed.
+        '''Returns a list of all requests that have not yet completed.
 
         If a batch requests is outstanding, it is returned and not the
         individual requests it is comprised of.
         '''
-        return self.requests.values()
+        return list(self.requests.values())
 
     async def close(self):
         '''Cancel all scheduled tasks and jobs: those for responses to
