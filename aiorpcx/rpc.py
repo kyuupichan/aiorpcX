@@ -142,6 +142,8 @@ class RPCError(Exception):
             return (f'RPCError({self.code:d}, {self.message!r}, '
                     f'{self.request_id!r})')
 
+    __str__ = __repr__
+
 
 class RPCBatch(object):
     '''An RPC request or response batch, incoming or outgoing.'''
@@ -430,11 +432,12 @@ class RPCProcessor(object):
             self._process_request(request, on_done)
 
     def _handle_request_response(self, request, response):
-        assert not request.done()
         if isinstance(response.result, RPCError):
             self.logger.debug('request returned errror: %s %s',
                               repr(request), repr(response.result))
-        request.set_result(response.result)
+            request.set_exception(response.result)
+        else:
+            request.set_result(response.result)
 
     def _process_response(self, response):
         request_id = response.request_id

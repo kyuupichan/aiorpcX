@@ -584,26 +584,28 @@ def test_request_round_trip():
 
     def handle_add(request):
         assert request.method == 'add'
-        result = request.result()
         if request.args[1] == "a":
+            result = request.exception()
             assert isinstance(result, RPCError)
             assert result.code == -1
             assert "numbers" in result.message
             handled.append('add_bad')
         else:
+            result = request.result()
             assert request.args == [1, 5, 10]
             assert result == 16
             handled.append(request.method)
 
     def handle_add_async(request):
         assert request.method == 'add_async'
-        result = request.result()
         if request.args[0] == "b":
+            result = request.exception()
             assert isinstance(result, RPCError)
             assert result.code == -1
             assert "numbers" in result.message
             handled.append('add_async_bad')
         else:
+            result = request.result()
             assert request.args == [1, 5, 10]
             assert result == 16
             handled.append(request.method)
@@ -616,14 +618,14 @@ def test_request_round_trip():
     def handle_bad_echo(request):
         assert request.method == 'echo'
         assert not request.args
-        result = request.result()
+        result = request.exception()
         assert isinstance(result, RPCError)
         assert result.code == rpc.protocol.INVALID_ARGS
         handled.append('bad_echo')
 
     def bad_request_handler(request):
         assert request.method == 'bad_request'
-        result = request.result()
+        result = request.exception()
         assert isinstance(result, RPCError)
         assert result.code == rpc.protocol.INTERNAL_ERROR
         handled.append(request.method)
@@ -757,7 +759,7 @@ def test_batch_round_trip():
     def handle_bad_echo(request):
         assert request.method == 'echo'
         assert not request.args
-        result = request.result()
+        result = request.exception()
         assert isinstance(result, RPCError)
         assert result.code == rpc.protocol.INVALID_ARGS
         handled.append('bad_echo')
@@ -1143,7 +1145,7 @@ def test_odd_calls():
             handled.append(request.method)
 
     def error(text, request):
-        result = request.result()
+        result = request.exception()
         if isinstance(result, RPCError) and text in result.message:
             handled.append(text)
 
