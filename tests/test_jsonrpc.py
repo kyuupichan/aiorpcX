@@ -496,10 +496,6 @@ def test_built_in_errors():
         assert isinstance(error, RPCError)
         assert error.code == rpc.INTERNAL_ERROR
         assert error.request_id == 5
-        error = rpc.timeout_error("a")
-        assert isinstance(error, RPCError)
-        assert error.code == rpc.TIMEOUT_ERROR
-        assert error.request_id == "a"
         error = rpc.args_error('fix your args')
         assert isinstance(error, RPCError)
         assert error.code == rpc.INVALID_ARGS

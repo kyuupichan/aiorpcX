@@ -46,7 +46,6 @@ class JSONRPC(object):
     INTERNAL_ERROR = -32603
     # Codes specific to this library
     ERROR_CODE_UNAVAILABLE = -100
-    TIMEOUT_ERROR = -101
 
     # Can be overridden by client application
     logger = logging.getLogger('JSONRPC')
@@ -203,11 +202,6 @@ class JSONRPC(object):
         '''Return an internal error RPCError object.'''
         return RPCError(cls.INTERNAL_ERROR,
                         'internal error processing request', request_id)
-
-    @classmethod
-    def timeout_error(cls, request_id):
-        '''Return a timeout error RPCError object.'''
-        return RPCError(cls.TIMEOUT_ERROR, 'request timed out', request_id)
 
     @classmethod
     def args_error(cls, message):
