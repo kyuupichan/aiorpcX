@@ -190,13 +190,12 @@ class RPCBatchOut(RPCBatch, Future):
     The batch can be await-ed on and/or it can be given a handler to
     call on completion.  This is also true for its member requests.
     '''
-    def __init__(self, on_done=None, *, loop=None):
-        '''Create an outgoig batch request.  on_done can be None.'''
+    def __init__(self, *, loop=None):
+        '''Create an empty outgoing batch request.  Members can be
+        added with add_request and add_notification.'''
         # We don't call RPCBatch.__init__()
         self.items = []
         Future.__init__(self, loop=loop)
-        if on_done:
-            self.add_done_callback(on_done)
 
     def _cancel_requests(self):
         for request in self.requests():
@@ -501,7 +500,7 @@ class RPCProcessor(object):
             request.add_done_callback(request_done)
         self.helper.send_message(self.protocol.request_message(request))
 
-    def send_batch(self, batch):
+    def send_batch(self, batch, on_done=None):
         '''Send a batch request.
 
         Unless it is all notifications, record the request IDs of the
@@ -510,6 +509,10 @@ class RPCProcessor(object):
         '''
         if not batch:
             raise RuntimeError('request batch cannot be empty')
+
+        if on_done:
+            batch.add_done_callback(on_done)
+
         request_ids = batch.request_ids()
         if request_ids:
             def request_done(request):
@@ -528,6 +531,7 @@ class RPCProcessor(object):
             batch.add_done_callback(batch_done)
         else:
             batch.set_result(False)
+
         self.helper.send_message(self.protocol.batch_message(batch))
 
     def all_requests(self):

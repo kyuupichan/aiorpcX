@@ -977,12 +977,12 @@ def test_outgoing_batch_request_cancellation_and_setting():
     def send_batch():
         nonlocal batch_done, request_done
         batch_done = request_done = 0
-        batch = RPCBatchOut(on_batch_done)
+        batch = RPCBatchOut()
         batch.add_request('add_async', [1], on_request_done)
         batch.add_request('add_async', [1], on_request_done)
         batch.add_notification('add_async', [])
         batch.add_request('add_async', [1], None)
-        rpc.send_batch(batch)
+        rpc.send_batch(batch, on_batch_done)
         return batch
 
     # First, cancel the bzatch
@@ -1046,9 +1046,9 @@ def test_outgoing_batch_request_cancellation_and_setting():
     assert not rpc.requests
 
     # Now send a notification batch.  Assert it is flagged done automatically
-    batch = RPCBatchOut(on_batch_done)
+    batch = RPCBatchOut()
     batch.add_notification('add_async', [1])
-    rpc.send_batch(batch)
+    rpc.send_batch(batch, on_batch_done)
     assert not rpc.requests
     assert batch.done()
 
@@ -1233,9 +1233,9 @@ def test_buggy_done_handler_is_logged():
         rpc.yield_to_loop()
 
     # Finally the batch itself
-    batch = RPCBatchOut(on_done)
+    batch = RPCBatchOut()
     batch.add_request('add_async', [1])
-    rpc.send_batch(batch)
+    rpc.send_batch(batch, on_done)
     batch.cancel()
     with pytest.raises(AsyncioLogError):
         rpc.yield_to_loop()
@@ -1291,10 +1291,10 @@ def test_close():
     # Test close cancels an outgoing batch and its requets
     rpc = MyRPCProcessor()
     called = 0
-    batch = RPCBatchOut(on_done)
+    batch = RPCBatchOut()
     batch.add_request('add_async', [2], on_done)
     batch.add_request('add_async', [3], on_done)
-    rpc.send_batch(batch)
+    rpc.send_batch(batch, on_done)
     loop.run_until_complete(rpc.close())
     assert called == 3
     assert batch.cancelled()
