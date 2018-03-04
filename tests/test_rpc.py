@@ -421,6 +421,10 @@ def test_basic():
     with MyRPCProcessor() as rpc:
         # With no messages added, there is nothing to do
         assert rpc.all_done()
+        assert rpc.recv_count == 0
+        assert rpc.sent_count == 0
+        assert rpc.errors == 0
+        assert rpc.internal_errors == 0
 
 # INCOMING REQUESTS
 
@@ -430,8 +434,11 @@ def test_unknown_method():
         # Test unknown method, for both notification and request
         rpc.add_request(RPCRequest('unk1', ["a"], 5))
         rpc.expect_error(rpc.protocol.METHOD_NOT_FOUND, "unk1", 5)
+        assert rpc.errors == 1
         rpc.add_request(RPCRequest('unk2', ["a"], None))
         rpc.expect_nothing()
+        assert rpc.errors == 2
+        assert rpc.recv_count == 2
         assert rpc.all_done()
 
 
@@ -498,6 +505,7 @@ def test_named_args_good():
             RPCRequest('add_async', {"x": 1, "z": 8}, 0),
             RPCRequest('add_async', {"x": 1}, None),
         ])
+        assert rpc.recv_count == 10
 
         rpc.expect_response(7, 0)
         rpc.expect_response(5, 0)
@@ -556,6 +564,8 @@ def test_bad_handler_lookup():
 
         rpc.expect_internal_error("made_bad_request", 0)
         rpc.expect_error_message("made_bad_notification")
+        assert rpc.internal_errors == 2
+        assert rpc.errors == 0
         assert rpc.all_done()
 
 
@@ -676,6 +686,7 @@ def test_request_round_trip():
             # Send it and fake receiving it
             rpc.send_request(request)
             rpc.message_received(rpc.responses.pop())
+        assert rpc.sent_count == len(requests)
 
         # Check all_requests
         assert isinstance(rpc.all_requests(), list)
@@ -786,6 +797,7 @@ def test_batch_round_trip():
         batch.add_notification('add')   # Erroneous; gets swallowed anyway
         batch.add_request('echo', ["ping"], handle_echo)
         rpc.send_batch(batch)
+        assert rpc.sent_count == len(batch)
         batch_message = rpc.responses.pop()
 
         assert not rpc.debug_messages
@@ -829,6 +841,7 @@ def test_some_invalid_requests():
             b'{"method": 2}]'
         )
         rpc.message_received(batch_message)
+        assert rpc.recv_count == 2
 
         # Now process the request jobs, generating queued response messages
         rpc.process_all()
@@ -1330,3 +1343,10 @@ def test_close():
 
     with MyRPCProcessor() as rpc:
         loop.run_until_complete(add_request_and_cancel(rpc))
+
+    # Test close reads request values
+    with MyRPCProcessor() as rpc:
+        request = RPCRequestOut('add', [4], None)
+        rpc.send_request(request)
+        request.set_result(5)
+        loop.run_until_complete(rpc.close())

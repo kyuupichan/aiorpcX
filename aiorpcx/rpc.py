@@ -281,6 +281,17 @@ class RPCProcessor(object):
         # RPCRequestOut object the key is its request ID; for a batch
         # it is its frozenset of request IDs
         self.requests = {}
+        # Statistics
+        # Count of requests sent and received (a batch of 10 counts as 10)
+        # Responses are not tracked
+        self.sent_count = 0
+        self.recv_count = 0
+        # Number of requests or notifications that raised an RPCError
+        # during processing because the request was invalid in some way.
+        self.errors = 0
+        # This includes internal errors, which are exceptions other than
+        # RPCError raised processing requests.
+        self.internal_errors = 0
 
     def _evaluate(self, request, func):
         '''Evaluate func in the context of processing a request.
@@ -298,11 +309,13 @@ class RPCProcessor(object):
         except CancelledError as error:
             return error
         except RPCError as error:
+            self.errors += 1
             error.request_id = request.request_id
             self.logger.debug('error processing request: %s %s',
                               repr(error), repr(request))
             return error
         except Exception:
+            self.internal_errors += 1
             self.logger.exception('exception raised processing request: %s',
                                   repr(request))
             return self.protocol.internal_error(request.request_id)
@@ -384,6 +397,8 @@ class RPCProcessor(object):
         If it is not a notification, send_func will be called with
         the response bytes, either now or later.
         '''
+        self.recv_count += 1
+
         # Wrap the call to _rpc_call in _evaluate in order to
         # correctly handle exceptions it might raise.
         rpc_call = self._evaluate(request, partial(self._rpc_call, request))
@@ -495,6 +510,7 @@ class RPCProcessor(object):
         If it is not a notification record the request ID so that an
         incoming response can be handled.
         '''
+        self.sent_count += 1
         if isinstance(request, RPCRequestOut):
             def request_done(request):
                 self.requests.pop(request.request_id, None)
@@ -513,6 +529,7 @@ class RPCProcessor(object):
         if not batch:
             raise RuntimeError('request batch cannot be empty')
 
+        self.sent_count += len(batch)
         if on_done:
             batch.add_done_callback(on_done)
 
