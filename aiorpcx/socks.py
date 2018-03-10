@@ -216,35 +216,70 @@ class SOCKSProxy(object):
         self.protocol = protocol
         self.auth = auth
 
-    async def test_connection(self, *, loop):
-        try:
-            socket = await _socket(self.address, loop)
-        except Exception as e:
-            raise SOCKSError('failed to connect to proxy at '
-                             f'{self.address}: {e}') from None
+    def __str__(self):
+        auth = 'username' if self.auth else 'none'
+        return f'{self.protocol.name()} proxy at {self.address}, auth: {auth}'
 
-        if self.protocol is SOCKS4a:
-            test = 'www.google.com', 80
-        else:
-            test = ipaddress.IPv4Address('8.8.8.8'), 53
-
+    async def _test_connection(self, *, loop):
+        # This can raise an exception.
+        socket = await _socket(self.address, loop)
         try:
+            if self.protocol is SOCKS4a:
+                test = 'www.google.com', 80
+            else:
+                test = ipaddress.IPv4Address('8.8.8.8'), 53
+
+            # This can also raise an exception
             await self.protocol.handshake(socket, *test, self.auth, loop=loop)
-        except SOCKSError as e:
-            raise SOCKSError(f'proxy at {self.address} failed '
-                             f'{self.protocol.name()} test: {e}') from None
         finally:
             socket.close()
+
+    async def create_connection(self, protocol_factory, host, port, *,
+                                loop=None, **kwargs):
+        '''Set up a connection to (host, port) through the proxy.
+
+        The function signature mimics loop.create_connection() and
+        returns the same thing.  Raises all the exceptions that may
+        raise plus SocksError if something goes wrong with the proxy
+        handshake.
+
+        The caller must not pass 'server_hostname' or 'sock' arguments.
+        '''
+        loop = loop or asyncio.get_event_loop()
+        socket = await _socket(self.address, loop)
+        try:
+            await self.protocol.handshake(socket, host, port, self.auth,
+                                          loop=loop)
+        except:
+            socket.close()
+            raise
+
+        if kwargs.get('ssl') is None:
+            host = None
+        return await loop.create_connection(
+            protocol_factory, sock=socket, server_hostname=host, **kwargs)
 
     @classmethod
     async def auto_detect(cls, address, auth, *, loop=None):
         loop = loop or asyncio.get_event_loop()
+        failures = []
         for protocol in (SOCKS5, SOCKS4a, SOCKS4):
             proxy = cls(address, protocol, auth)
             try:
-                await proxy.test_connection(loop=loop)
+                await proxy._test_connection(loop=loop)
                 return proxy
-            except SOCKSError as e:
-                print(str(e))
-                logging.debug(str(e))
-        return None
+            except Exception as e:
+                failures.append(e)
+        return failures
+
+    @classmethod
+    async def auto_detect_host(cls, host, ports, auth, *, loop=None):
+        failures = []
+        for port in ports:
+            result = await cls.auto_detect((host, port), auth, loop=loop)
+            # Success?
+            if isinstance(result, cls):
+                return result
+            failures.extend(result)
+
+        return failures

@@ -10,7 +10,7 @@ import pytest
 from aiorpcx.socks import (SOCKS4, SOCKS4a, SOCKS5, SOCKSProxy,
                            SOCKSError, SOCKSUserAuth, SOCKSBase)
 
-
+PORT = 8484
 GDNS = (ipaddress.IPv4Address('8.8.8.8'), 53)
 GCOM = ('www.google.com', 80)
 IPv6 = (ipaddress.IPv6Address('::'), 80)
@@ -36,11 +36,10 @@ class FakeServer(asyncio.Protocol):
 
 @pytest.fixture(scope="module")
 def proxy_address():
-    port = 8484
     loop = asyncio.get_event_loop()
-    coro = loop.create_server(FakeServer, host='localhost', port=port)
+    coro = loop.create_server(FakeServer, host='localhost', port=PORT)
     server = loop.run_until_complete(coro)
-    yield ('localhost', port)
+    yield ('localhost', PORT)
     server.close()
 
 
@@ -421,13 +420,13 @@ class TestSOCKSProxy(object):
         coro = SOCKSProxy.auto_detect(('8.8.8.8', 53), None)
         loop = asyncio.get_event_loop()
         result = loop.run_until_complete(coro)
-        assert result is None
+        assert isinstance(result, list)
 
     def test_cannot_connect(self):
         coro = SOCKSProxy.auto_detect(('0.0.0.0', 53), None)
         loop = asyncio.get_event_loop()
         result = loop.run_until_complete(coro)
-        assert result is None
+        assert isinstance(result, list)
 
     def test_good_SOCKS5(self, auth):
         loop = asyncio.get_event_loop()
@@ -460,7 +459,67 @@ class TestSOCKSProxy(object):
         coro = SOCKSProxy.auto_detect(FakeServer.proxy_address,
                                       auth, loop=loop)
         result = loop.run_until_complete(coro)
-        assert result is not None
+        assert isinstance(result, SOCKSProxy)
         assert result.protocol is SOCKS4
         assert result.address == FakeServer.proxy_address
         assert result.auth == auth
+
+    def test_autodetect_host_success(self, auth):
+        loop = asyncio.get_event_loop()
+        chosen_auth = 2 if auth else 0
+        FakeServer.responses = SOCKS5_good_responses(auth, chosen_auth)
+        coro = SOCKSProxy.auto_detect_host('localhost', [PORT], auth,
+                                           loop=None)
+        result = loop.run_until_complete(coro)
+        assert isinstance(result, SOCKSProxy)
+        assert result.protocol is SOCKS5
+        assert result.address == FakeServer.proxy_address
+        assert result.auth == auth
+
+    def test_autodetect_host_failure(self, auth):
+        loop = asyncio.get_event_loop()
+        ports = [1, 2]
+        coro = SOCKSProxy.auto_detect_host('localhost', ports, auth, loop=loop)
+        result = loop.run_until_complete(coro)
+        assert isinstance(result, list)
+        assert len(result) == 3 * len(ports)
+
+    def test_create_connection_connect_failure(self, auth):
+        loop = asyncio.get_event_loop()
+        proxy = SOCKSProxy(('localhost', 1), SOCKS5, auth)
+        loop = asyncio.get_event_loop()
+        coro = proxy.create_connection(None, *GCOM, loop=loop)
+        with pytest.raises(OSError):
+            loop.run_until_complete(coro)
+
+    def test_create_connection_socks_failure(self, auth):
+        loop = asyncio.get_event_loop()
+        FakeServer.responses = [bytes([1, 90])]
+        proxy = SOCKSProxy(('localhost', PORT), SOCKS5, auth)
+        loop = asyncio.get_event_loop()
+        coro = proxy.create_connection(None, *GCOM, loop=loop)
+        with pytest.raises(SOCKSError):
+            loop.run_until_complete(coro)
+
+    def test_create_connection_good(self, auth):
+        class MyProtocol(asyncio.Protocol):
+            pass
+
+        loop = asyncio.get_event_loop()
+        chosen_auth = 2 if auth else 0
+        FakeServer.responses = SOCKS5_good_responses(auth, chosen_auth)
+        proxy = SOCKSProxy(('localhost', PORT), SOCKS5, auth)
+        loop = asyncio.get_event_loop()
+        coro = proxy.create_connection(MyProtocol, *GCOM, loop=loop)
+        transport, protocol = loop.run_until_complete(coro)
+        assert isinstance(protocol, MyProtocol)
+        transport.close()
+
+
+def test_str():
+    address = ('localhost', 80)
+    p = SOCKSProxy(address, SOCKS4a, None)
+    assert str(p) == f'SOCKS4a proxy at {address}, auth: none'
+    address = ('www.google.com', 8080)
+    p = SOCKSProxy(address, SOCKS5, auth_methods[1])
+    assert str(p) == f'SOCKS5 proxy at {address}, auth: username'
