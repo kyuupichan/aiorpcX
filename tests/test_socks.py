@@ -435,22 +435,24 @@ class TestSOCKSProxy(object):
         coro = SOCKSProxy.auto_detect(FakeServer.proxy_address,
                                       auth, loop=loop)
         result = loop.run_until_complete(coro)
-        assert result is not None
+        assert isinstance(result, SOCKSProxy)
         assert result.protocol is SOCKS5
         assert result.address == FakeServer.proxy_address
         assert result.auth == auth
+        assert result.peername == ('127.0.0.1', PORT)
 
-    def test_good_SOCKS4(self, auth):
+    def test_good_SOCKS4a(self, auth):
         loop = asyncio.get_event_loop()
         FakeServer.responses = [bytes([1, 90]),
                                 bytes([0,90]) + os.urandom(6)]
         coro = SOCKSProxy.auto_detect(FakeServer.proxy_address,
                                       auth, loop=loop)
         result = loop.run_until_complete(coro)
-        assert result is not None
+        assert isinstance(result, SOCKSProxy)
         assert result.protocol is SOCKS4a
         assert result.address == FakeServer.proxy_address
         assert result.auth == auth
+        assert result.peername == ('127.0.0.1', PORT)
 
     def test_good_SOCKS4(self, auth):
         loop = asyncio.get_event_loop()
@@ -463,6 +465,7 @@ class TestSOCKSProxy(object):
         assert result.protocol is SOCKS4
         assert result.address == FakeServer.proxy_address
         assert result.auth == auth
+        assert result.peername == ('127.0.0.1', PORT)
 
     def test_autodetect_host_success(self, auth):
         loop = asyncio.get_event_loop()
@@ -475,6 +478,7 @@ class TestSOCKSProxy(object):
         assert result.protocol is SOCKS5
         assert result.address == FakeServer.proxy_address
         assert result.auth == auth
+        assert result.peername == ('127.0.0.1', PORT)
 
     def test_autodetect_host_failure(self, auth):
         loop = asyncio.get_event_loop()

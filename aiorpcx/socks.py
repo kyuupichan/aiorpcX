@@ -215,24 +215,65 @@ class SOCKSProxy(object):
         self.address = address
         self.protocol = protocol
         self.auth = auth
+        # Set on a successful handshake with the proxy; the result of
+        # socket.getpeername()
+        self.peername = None
 
     def __str__(self):
         auth = 'username' if self.auth else 'none'
         return f'{self.protocol.name()} proxy at {self.address}, auth: {auth}'
 
-    async def _test_connection(self, *, loop):
-        # This can raise an exception.
+    async def _connect(self, host, port, loop):
+        '''Connect to the proxy and does a handshake.
+
+        Return the open socket on success, otherwise raise an
+        exception.
+        '''
         socket = await _socket(self.address, loop)
         try:
-            if self.protocol is SOCKS4a:
-                test = 'www.google.com', 80
-            else:
-                test = ipaddress.IPv4Address('8.8.8.8'), 53
-
-            # This can also raise an exception
-            await self.protocol.handshake(socket, *test, self.auth, loop=loop)
-        finally:
+            await self.protocol.handshake(socket, host, port, self.auth,
+                                          loop=loop)
+        except:
             socket.close()
+            raise
+
+        self.peername = socket.getpeername()
+        return socket
+
+    async def _test_connection(self, loop):
+        # This can raise an exception.
+        if self.protocol is SOCKS4a:
+            host, port = 'www.google.com', 80
+        else:
+            host, port = ipaddress.IPv4Address('8.8.8.8'), 53
+
+        socket = await self._connect(host, port, loop)
+        socket.close()
+
+    @classmethod
+    async def auto_detect(cls, address, auth, *, loop=None):
+        loop = loop or asyncio.get_event_loop()
+        failures = []
+        for protocol in (SOCKS5, SOCKS4a, SOCKS4):
+            proxy = cls(address, protocol, auth)
+            try:
+                await proxy._test_connection(loop)
+                return proxy
+            except Exception as e:
+                failures.append(f'{protocol.name()} proxy detection at '
+                                f'{address} failed: {e}')
+        return failures
+
+    @classmethod
+    async def auto_detect_host(cls, host, ports, auth, *, loop=None):
+        failures = []
+        for port in ports:
+            result = await cls.auto_detect((host, port), auth, loop=loop)
+            if isinstance(result, cls):
+                return result
+            failures.extend(result)
+
+        return failures
 
     async def create_connection(self, protocol_factory, host, port, *,
                                 loop=None, **kwargs):
@@ -246,40 +287,8 @@ class SOCKSProxy(object):
         The caller must not pass 'server_hostname' or 'sock' arguments.
         '''
         loop = loop or asyncio.get_event_loop()
-        socket = await _socket(self.address, loop)
-        try:
-            await self.protocol.handshake(socket, host, port, self.auth,
-                                          loop=loop)
-        except:
-            socket.close()
-            raise
-
+        socket = await self._connect(host, port, loop)
         if kwargs.get('ssl') is None:
             host = None
         return await loop.create_connection(
             protocol_factory, sock=socket, server_hostname=host, **kwargs)
-
-    @classmethod
-    async def auto_detect(cls, address, auth, *, loop=None):
-        loop = loop or asyncio.get_event_loop()
-        failures = []
-        for protocol in (SOCKS5, SOCKS4a, SOCKS4):
-            proxy = cls(address, protocol, auth)
-            try:
-                await proxy._test_connection(loop=loop)
-                return proxy
-            except Exception as e:
-                failures.append(e)
-        return failures
-
-    @classmethod
-    async def auto_detect_host(cls, host, ports, auth, *, loop=None):
-        failures = []
-        for port in ports:
-            result = await cls.auto_detect((host, port), auth, loop=loop)
-            # Success?
-            if isinstance(result, cls):
-                return result
-            failures.extend(result)
-
-        return failures
