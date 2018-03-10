@@ -231,7 +231,7 @@ def SOCKS5_good_responses(auth, chosen_auth):
         n = random.randrange(5, 15)
         response += bytes([3, n]) + b'a' * n + os.urandom(2)
     else:
-        response += bytes([4]) + os.urandom(18) # IPv6
+        response += bytes([4]) + os.urandom(18)  # IPv6
     responses.append(response)
     return responses
 
@@ -444,7 +444,7 @@ class TestSOCKSProxy(object):
     def test_good_SOCKS4a(self, auth):
         loop = asyncio.get_event_loop()
         FakeServer.responses = [bytes([1, 90]),
-                                bytes([0,90]) + os.urandom(6)]
+                                bytes([0, 90]) + os.urandom(6)]
         coro = SOCKSProxy.auto_detect(FakeServer.proxy_address,
                                       auth, loop=loop)
         result = loop.run_until_complete(coro)
@@ -456,8 +456,8 @@ class TestSOCKSProxy(object):
 
     def test_good_SOCKS4(self, auth):
         loop = asyncio.get_event_loop()
-        FakeServer.responses = [bytes([1, 90]), bytes([1,90]),
-                                bytes([0,90]) + os.urandom(6)]
+        FakeServer.responses = [bytes([1, 90]), bytes([1, 90]),
+                                bytes([0, 90]) + os.urandom(6)]
         coro = SOCKSProxy.auto_detect(FakeServer.proxy_address,
                                       auth, loop=loop)
         result = loop.run_until_complete(coro)

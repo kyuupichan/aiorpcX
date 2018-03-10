@@ -179,17 +179,17 @@ class SOCKS5(SOCKSBase):
         # Get response
         data = await loop.sock_recv(socket, 5)
         if (len(data) != 5 or data[0] != 5 or data[2] != 0
-            or data[3] not in (1, 3, 4)):
+                or data[3] not in (1, 3, 4)):
             raise SOCKSError(f'invalid SOCKS5 proxy response: {data}')
         if data[1] != 0:
             raise SOCKSError(cls.ERROR_CODES.get(
                 data[1], f'unknown SOCKS5 error code: {data[1]}'))
         if data[3] == 1:
-            addr_len, data = 3, data[4:]  # IPv4
+            addr_len, data = 3, data[4:]   # IPv4
         elif data[3] == 3:
-            addr_len, data = data[4], b'' # Hostname
+            addr_len, data = data[4], b''  # Hostname
         else:
-            addr_len, data = 15, data[4:] # IPv6
+            addr_len, data = 15, data[4:]  # IPv6
         remaining_len = addr_len + 2
         rest = await loop.sock_recv(socket, remaining_len)
         if len(rest) != remaining_len:
@@ -201,7 +201,7 @@ async def _socket(address, loop):
     try:
         sock.setblocking(False)
         await loop.sock_connect(sock, address)
-    except:
+    except BaseException:
         sock.close()
         raise
     return sock
@@ -233,7 +233,7 @@ class SOCKSProxy(object):
         try:
             await self.protocol.handshake(socket, host, port, self.auth,
                                           loop=loop)
-        except:
+        except BaseException:
             socket.close()
             raise
 
