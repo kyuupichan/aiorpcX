@@ -28,7 +28,6 @@
 import asyncio
 import collections
 import ipaddress
-import logging
 import socket
 import struct
 
