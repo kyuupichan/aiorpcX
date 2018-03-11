@@ -459,6 +459,11 @@ class JSONRPCLoose(JSONRPC):
     _message_id = JSONRPCv2._message_id
     _validate_message = JSONRPC._validate_message
     _request_args = JSONRPCv2._request_args
+    # Outoing messages are JSONRPCv2 so we give the other side the
+    # best chance to assume / detect JSONRPCv2 as default protocol.
+    error_payload = JSONRPCv2.error_payload
+    request_payload = JSONRPCv2.request_payload
+    response_payload = JSONRPCv2.response_payload
 
     @classmethod
     def response_result(cls, payload):
@@ -475,21 +480,3 @@ class JSONRPCLoose(JSONRPC):
 
         # Can be None
         return payload['result']
-
-    @classmethod
-    def request_payload(cls, request):
-        result = JSONRPCv2.request_payload(request)
-        del result['jsonrpc']
-        return result
-
-    @classmethod
-    def response_payload(cls, response):
-        result = JSONRPCv2.response_payload(response)
-        del result['jsonrpc']
-        return result
-
-    @classmethod
-    def error_payload(cls, error):
-        result = JSONRPCv2.error_payload(error)
-        del result['jsonrpc']
-        return result

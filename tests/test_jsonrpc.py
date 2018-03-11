@@ -570,9 +570,6 @@ def test_JSONRPCv2_and_JSONRPCLoosemessages():
             else:
                 binary = rpc.batch_message(item)
             test_payload = json.loads(binary.decode())
-            if rpc is JSONRPCLoose:
-                for p in payload if isinstance(payload, list) else [payload]:
-                    p.pop('jsonrpc')
             assert test_payload == payload
 
 
