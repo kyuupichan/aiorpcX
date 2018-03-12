@@ -40,7 +40,7 @@ class RPCRequest(object):
     '''An RPC request or notification that has been received, or an
     outgoing notification.
 
-    Outgong requests are represented by RPCRequestOut.
+    Outgoing requests are represented by RPCRequestOut.
     '''
 
     def __init__(self, method, args, request_id):
@@ -100,6 +100,7 @@ class RPCResponse(object):
     '''
 
     def __init__(self, result, request_id):
+        assert request_id is not None
         # result is an RPCError object if an error was returned
         self.result = result
         self.request_id = request_id
@@ -146,7 +147,9 @@ class RPCError(Exception):
 
 
 class RPCBatch(object):
-    '''An RPC request or response batch, incoming or outgoing.'''
+    '''An incoming or outgoing RPC response batch, or an incoming RPC
+    request batch.
+    '''
 
     def __init__(self, items):
         self.items = items

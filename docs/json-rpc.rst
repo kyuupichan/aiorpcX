@@ -1,4 +1,4 @@
-.. currentmodule:: jsonrpc
+.. currentmodule:: aiorpcx
 
 JSON RPC
 ========
@@ -75,33 +75,33 @@ passed over the network after framing.
 
 .. classmethod:: JSONRPC.request_message(item)
 
-   Convert an :class:`RPCRequest` item to a message.
+   Convert a request item to a message.
 
-   :param RPCRequest item: the request item
+   :param item: an :class:`RPCRequest` item
    :return: the message
    :rtype: bytes
 
 .. classmethod:: JSONRPC.response_message(item)
 
-   Convert an :class:`RPCResponse` item to a message.
+   Convert a response item to a message.
 
-   :param RPCResponse item: the response item
+   :param item: an :class:`RPCResponse` item
    :return: the message
    :rtype: bytes
 
 .. classmethod:: JSONRPC.error_message(item)
 
-   Convert an :class:`RPCError` item to a message.
+   Convert an error item to a message.
 
-   :param RPCError item: the error item
+   :param item: an :class:`RPCError` item
    :return: the message
    :rtype: bytes
 
 .. classmethod:: JSONRPC.batch_message(item)
 
-   Convert an :class:`RPCError` item to a message.
+   Convert a batch item to a message.
 
-   :param RPCBatch item: the batch item
+   :param item: an :class:`RPCBatch` item
    :return: the message
    :rtype: bytes
 
@@ -113,8 +113,9 @@ passed over the network after framing.
    of `payload` if that is a dictionary, otherwise :const:`None`.
 
    :param payload: a Python object that can be represented as JSON.
-      Numbers, strings, lists, dictionaries, :const:`True`,
-      :const:`False` and :const:`None` are all valid.
+                   Numbers, strings, lists, dictionaries,
+                   :const:`True`, :const:`False` and :const:`None` are
+                   all valid.
    :return: a JSON message
    :rtype: bytes
 
@@ -132,7 +133,7 @@ appropriately for the class's protocol version.
    error for the given request ID.  The error message will be "internal
    error processing request".
 
-   :param item: the request ID, normally an integer or string
+   :param request_id: the request ID, normally an integer or string
    :return: the error object
    :rtype: :class:`RPCError`
 

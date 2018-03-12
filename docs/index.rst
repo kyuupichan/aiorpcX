@@ -48,6 +48,7 @@ Documentation
 .. toctree::
 
    json-rpc
+   rpc
 
 Indices and tables
 ==================
