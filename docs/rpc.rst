@@ -1,11 +1,11 @@
 .. currentmodule:: aiorpcx
 
-rpc
-===
+RPC items
+=========
 
-The :mod:`rpc` module defines some RPC object classes that will be
-returned by other APIs in :mod:`aiorpcX`.  You should not instantiate
-these objects directly.
+The :mod:`aiorpcx` module defines some classes, instances of which
+will be returned by some of its APIs.  You should not need to
+instantiate these objects directly.
 
 An instance of one of these classes is called an :dfn:`item`.
 
