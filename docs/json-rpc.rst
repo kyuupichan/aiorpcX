@@ -3,7 +3,7 @@
 JSON RPC
 ========
 
-The :mod:`jsonrpc` module provides classes to interpret and construct
+The :mod:`aiorpcx` module provides classes to interpret and construct
 JSON RPC protocol messages.  Class instances are not used; all methods
 are class methods.  Just call methods on the classes directly.
 

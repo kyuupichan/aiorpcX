@@ -100,7 +100,6 @@ class RPCResponse(object):
     '''
 
     def __init__(self, result, request_id):
-        assert request_id is not None
         # result is an RPCError object if an error was returned
         self.result = result
         self.request_id = request_id

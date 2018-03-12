@@ -57,7 +57,7 @@ class FramerBase(object):
 class NewlineFramer(FramerBase):
     '''A framer for a protocol where messages are separated by newlines.'''
 
-    def __init__(self, max_size=250*500):
+    def __init__(self, max_size=250*4000):
         '''max_size - an anti-DoS measure.  If, after processing an incoming
         message, buffered data would exceed max_size bytes, that
         buffered data is dropped entirely and the framer waits for a
@@ -65,7 +65,7 @@ class NewlineFramer(FramerBase):
         '''
         # The default max_size value is motivated by JSONRPC, where a
         # normal request will be 250 bytes or less, and a reasonable
-        # batch may contain 500 requests.
+        # batch may contain 4000 requests.
         self.max_size = max_size
         self.parts = []
         self.synchronizing = False
