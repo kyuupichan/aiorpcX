@@ -36,8 +36,8 @@ bug or have a suggestion to improve the library.
 Authors and License
 ===================
 
-Neil Booth wrote the code, which is derived from ElectrumX's original
-JSON RPC handling.
+Neil Booth wrote the code, which is derived from the original JSON RPC
+code of `ElectrumX <https://github.com/kyuupichan/electrumx/>`_.
 
 The code is released under the `MIT Licence
 <https://github.com/kyuupichan/aiorpcX/LICENCE>`_.
