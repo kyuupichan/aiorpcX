@@ -32,7 +32,7 @@ import socket
 import struct
 
 
-__all__ = ('SOCKSUserAuth', 'SOCKSProxy')
+__all__ = ('SOCKSUserAuth', 'SOCKS4', 'SOCKS4a', 'SOCKS5', 'SOCKSProxy')
 
 
 SOCKSUserAuth = collections.namedtuple("SOCKSUserAuth", "username password")
