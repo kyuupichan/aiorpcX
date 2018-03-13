@@ -275,19 +275,15 @@ class SOCKSProxy(object):
         return failures
 
     async def create_connection(self, protocol_factory, host, port, *,
-                                loop=None, **kwargs):
+                                loop=None, ssl=None):
         '''Set up a connection to (host, port) through the proxy.
 
-        The function signature mimics loop.create_connection() and
-        returns the same thing.  Raises all the exceptions that may
-        raise plus SocksError if something goes wrong with the proxy
-        handshake.
-
-        The caller must not pass 'server_hostname' or 'sock' arguments.
+        The function signature is similar to loop.create_connection()
+        and the result is the same.  Additionally raises SOCKSError if
+        something goes wrong with the proxy handshake.
         '''
         loop = loop or asyncio.get_event_loop()
         socket = await self._connect(host, port, loop)
-        if kwargs.get('ssl') is None:
-            host = None
         return await loop.create_connection(
-            protocol_factory, sock=socket, server_hostname=host, **kwargs)
+            protocol_factory, sock=socket, ssl=ssl,
+            server_hostname=host if ssl else None)
