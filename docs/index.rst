@@ -50,6 +50,7 @@ Documentation
    framing
    json-rpc
    rpc
+   socks
 
 Indices and tables
 ==================
