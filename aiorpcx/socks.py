@@ -31,6 +31,8 @@ import ipaddress
 import socket
 import struct
 
+from .util import Timeout
+
 
 __all__ = ('SOCKSUserAuth', 'SOCKS4', 'SOCKS4a', 'SOCKS5', 'SOCKSProxy',
            'SOCKSError', 'SOCKSProtocolError', 'SOCKSFailure')
@@ -243,7 +245,7 @@ class SOCKSProxy(object):
         auth = 'username' if self.auth else 'none'
         return f'{self.protocol.name()} proxy at {self.address}, auth: {auth}'
 
-    async def _connect_one(self, host, port, loop):
+    async def _connect_one(self, host, port, loop, timeout):
         '''Connect to the proxy and perform a handshake requesting a
         connection to (host, port).
 
@@ -252,8 +254,10 @@ class SOCKSProxy(object):
         sock = socket.socket()
         try:
             sock.setblocking(False)
-            await loop.sock_connect(sock, self.address)
-            await self.protocol.handshake(sock, host, port, self.auth, loop)
+            with Timeout(timeout, loop) as t:
+                await t.run(loop.sock_connect(sock, self.address))
+                await t.run(self.protocol.handshake(sock, host, port,
+                                                    self.auth, loop))
             self.host = host
             self.port = port
             self.peername = sock.getpeername()
@@ -262,7 +266,7 @@ class SOCKSProxy(object):
             sock.close()
             return e
 
-    async def _connect(self, hosts, port, loop):
+    async def _connect(self, hosts, port, loop, timeout):
         '''Connect to the proxy and perform a handshake requesting it proxy
         a connection to (host, port) for each host in hosts.
 
@@ -272,7 +276,7 @@ class SOCKSProxy(object):
 
         exceptions = []
         for host in hosts:
-            sock = await self._connect_one(host, port, loop)
+            sock = await self._connect_one(host, port, loop, timeout)
             if isinstance(sock, socket.socket):
                 return sock
             exceptions.append(sock)
@@ -281,7 +285,7 @@ class SOCKSProxy(object):
         raise (exceptions[0] if len(strings) == 1 else
                OSError(f'multiple exceptions: {", ".join(strings)}'))
 
-    async def _detect_proxy(self, loop):
+    async def _detect_proxy(self, loop, timeout):
         '''Return True if it appears we can connect to a SOCKS proxy,
         otherwise False.
         '''
@@ -290,7 +294,7 @@ class SOCKSProxy(object):
         else:
             host, port = ipaddress.IPv4Address('8.8.8.8'), 53
 
-        sock = await self._connect_one(host, port, loop)
+        sock = await self._connect_one(host, port, loop, timeout)
         if isinstance(sock, socket.socket):
             sock.close()
             return True
@@ -300,7 +304,8 @@ class SOCKSProxy(object):
         return isinstance(sock, SOCKSFailure)
 
     @classmethod
-    async def auto_detect_address(cls, address, auth, *, loop=None):
+    async def auto_detect_address(cls, address, auth, *, loop=None,
+                                  timeout=5.0):
         '''Try to detect a SOCKS proxy at address using the authentication
         method (or None).  SOCKS5, SOCKS4a and SOCKS are tried in
         order.  If a SOCKS proxy is detected a SOCKSProxy object is
@@ -314,12 +319,13 @@ class SOCKSProxy(object):
         loop = loop or asyncio.get_event_loop()
         for protocol in (SOCKS5, SOCKS4a, SOCKS4):
             proxy = cls(address, protocol, auth)
-            if await proxy._detect_proxy(loop):
+            if await proxy._detect_proxy(loop, timeout):
                 return proxy
         return None
 
     @classmethod
-    async def auto_detect_host(cls, host, ports, auth, *, loop=None):
+    async def auto_detect_host(cls, host, ports, auth, *, loop=None,
+                               timeout=5.0):
         '''Try to detect a SOCKS proxy on a host on one of the ports.
 
         Calls auto_detect for the ports in order.  Returns SOCKS are
@@ -333,15 +339,16 @@ class SOCKSProxy(object):
         '''
         for port in ports:
             address = (host, port)
-            proxy = await cls.auto_detect_address(address, auth, loop=loop)
+            proxy = await cls.auto_detect_address(address, auth,
+                                                  loop=loop, timeout=timeout)
             if proxy:
                 return proxy
 
         return None
 
     async def create_connection(self, protocol_factory, host, port, *,
-                                resolve=False, loop=None, ssl=None,
-                                family=0, proto=0, flags=0):
+                                resolve=False, timeout=30.0, loop=None,
+                                ssl=None, family=0, proto=0, flags=0):
         '''Set up a connection to (host, port) through the proxy.
 
         If resolve is True then host is resolved locally with
@@ -361,7 +368,8 @@ class SOCKSProxy(object):
         else:
             hosts = [host]
 
-        sock = await self._connect(hosts, port, loop)
+        sock = await self._connect(hosts, port, loop, timeout)
+
         return await loop.create_connection(
             protocol_factory, sock=sock, ssl=ssl,
             server_hostname=host if ssl else None)

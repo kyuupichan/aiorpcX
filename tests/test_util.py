@@ -5,7 +5,8 @@ import time
 
 import pytest
 
-from aiorpcx.util import SignatureInfo, signature_info, JobQueue, is_async_call
+from aiorpcx.util import (SignatureInfo, signature_info, JobQueue,
+                          Timeout, is_async_call)
 
 
 class MyLogger(logging.Logger):
@@ -273,3 +274,27 @@ def test_jq_cancellation():
     jq.process_some(time.time() + 1)
     assert not acounter and not acancelled and not adone and not counter
     assert not logger.logged_msg
+
+
+def test_timeout():
+    async def timeout():
+        try:
+            with Timeout(0.01, loop) as t:
+                await t.run(asyncio.sleep(0.01))
+            timed_out = False
+        except asyncio.TimeoutError:
+            timed_out = True
+        return timed_out and t.timed_out
+
+    async def no_timeout():
+        try:
+            with Timeout(0.02, loop) as t:
+                await t.run(asyncio.sleep(0.01))
+            timed_out = False
+        except asyncio.TimeoutError:
+            timed_out = True
+        return not timed_out and not t.timed_out
+
+    loop = asyncio.get_event_loop()
+    assert loop.run_until_complete(timeout()) is True
+    assert loop.run_until_complete(no_timeout()) is True

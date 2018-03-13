@@ -4,6 +4,7 @@ import os
 import random
 import socket
 import struct
+import time
 
 import pytest
 
@@ -36,7 +37,14 @@ class FakeServer(asyncio.Protocol):
     def data_received(self, data):
         FakeServer.received.append(data)
         response = self.responses.pop(0)
+        if isinstance(response, (int, float)):
+            time.sleep(response)
+            response = b''
         self.transport.write(response)
+
+
+class MyProtocol(asyncio.Protocol):
+    pass
 
 
 @pytest.fixture(scope="module")
@@ -68,7 +76,7 @@ def addr4a(request):
     return request.param
 
 
-@pytest.fixture(params=set(SOCKS5_addresses) - set(SOCKS4a_addresses))
+@pytest.fixture(params=[IPv6_IPv6])
 def addr4abad(request):
     return request.param
 
@@ -237,7 +245,7 @@ class TestSOCKS4a(object):
         response = bytes([0, 90]) + os.urandom(6)
         FakeServer.responses = [response]
         loop, socket = server_socket()
-        coro = SOCKS4.handshake(socket, *addr4abad, auth, loop=loop)
+        coro = SOCKS4a.handshake(socket, *addr4abad, auth, loop=loop)
         with pytest.raises(SOCKSProtocolError):
             loop.run_until_complete(coro)
 
@@ -457,6 +465,13 @@ class TestSOCKS5(object):
                            'short SOCKS5 proxy reply',
                            SOCKSProtocolError)
 
+    def test_rejects_others(self, auth):
+        response = bytes([0, 90]) + os.urandom(6)
+        FakeServer.responses = [response]
+        loop, socket = server_socket()
+        coro = SOCKS5.handshake(socket, 5, 5, auth, loop=loop)
+        with pytest.raises(SOCKSProtocolError):
+            loop.run_until_complete(coro)
 
 class TestSOCKSProxy(object):
 
@@ -511,12 +526,22 @@ class TestSOCKSProxy(object):
         assert result.auth == auth
         assert result.peername == ('127.0.0.1', PORT)
 
+    def test_autodetect_address_timeout(self, auth):
+        loop = asyncio.get_event_loop()
+        FakeServer.responses = [b'\5']  # Keep it waiting for more
+        coro = SOCKSProxy.auto_detect_address(FakeServer.proxy_address, auth,
+                                              timeout=0.01)
+        t = time.time()
+        result = loop.run_until_complete(coro)
+        assert result is None
+        assert time.time() - t < 0.1
+
     def test_autodetect_host_success(self, auth):
         loop = asyncio.get_event_loop()
         chosen_auth = 2 if auth else 0
         FakeServer.responses = SOCKS5_good_responses(auth, chosen_auth)
         coro = SOCKSProxy.auto_detect_host('localhost', [PORT], auth,
-                                           loop=None)
+                                           loop=None, timeout=0.5)
         result = loop.run_until_complete(coro)
         assert isinstance(result, SOCKSProxy)
         assert result.protocol is SOCKS5
@@ -530,6 +555,16 @@ class TestSOCKSProxy(object):
         coro = SOCKSProxy.auto_detect_host('localhost', ports, auth, loop=loop)
         result = loop.run_until_complete(coro)
         assert result is None
+
+    def test_autodetect_host_timeout(self, auth):
+        loop = asyncio.get_event_loop()
+        FakeServer.responses = [b'\5']  # Keep it waiting for more
+        coro = SOCKSProxy.auto_detect_host('localhost', [PORT], auth,
+                                           loop=None, timeout=0.01)
+        t = time.time()
+        result = loop.run_until_complete(coro)
+        assert result is None
+        assert time.time() - t < 0.1
 
     def test_create_connection_connect_failure(self, auth):
         loop = asyncio.get_event_loop()
@@ -548,16 +583,25 @@ class TestSOCKSProxy(object):
         with pytest.raises(SOCKSProtocolError):
             loop.run_until_complete(coro)
 
-    def test_create_connection_good(self, auth):
-        class MyProtocol(asyncio.Protocol):
-            pass
+    def test_create_connection_timeout(self, auth):
+        loop = asyncio.get_event_loop()
+        chosen_auth = 2 if auth else 0
+        FakeServer.responses = SOCKS5_good_responses(auth, chosen_auth)
+        FakeServer.responses[1] = 0.01  # make it sleep
+        proxy = SOCKSProxy(('localhost', PORT), SOCKS5, auth)
+        loop = asyncio.get_event_loop()
+        coro = proxy.create_connection(MyProtocol, *GCOM, timeout=0.01)
+        with pytest.raises(asyncio.TimeoutError):
+            loop.run_until_complete(coro)
 
+    def test_create_connection_good(self, auth):
         loop = asyncio.get_event_loop()
         chosen_auth = 2 if auth else 0
         FakeServer.responses = SOCKS5_good_responses(auth, chosen_auth)
         proxy = SOCKSProxy(('localhost', PORT), SOCKS5, auth)
         loop = asyncio.get_event_loop()
-        coro = proxy.create_connection(MyProtocol, *GCOM, loop=loop)
+        coro = proxy.create_connection(MyProtocol, *GCOM, loop=loop,
+                                       timeout=0.05)
         transport, protocol = loop.run_until_complete(coro)
         assert proxy.host == GCOM[0]
         assert proxy.port == GCOM[1]
@@ -566,9 +610,6 @@ class TestSOCKSProxy(object):
         transport.close()
 
     def test_create_connection_resolve_good(self, auth):
-        class MyProtocol(asyncio.Protocol):
-            pass
-
         loop = asyncio.get_event_loop()
         chosen_auth = 2 if auth else 0
         FakeServer.responses = SOCKS5_good_responses(auth, chosen_auth)

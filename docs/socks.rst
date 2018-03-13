@@ -30,7 +30,8 @@ Authentication
 --------------
 
 Currently the only supported authentication method is with a username
-and password.
+and password.  Usernames can be used by all SOCKS protocols, but only
+``SOCKS5`` uses the password.
 
 .. class:: SOCKSUserAuth
 
@@ -43,7 +44,9 @@ and password.
 
   .. attribute:: password
 
-     A string.
+     A string.  Ignored by the :class:`SOCKS4` and class:`SOCKS4a`
+     protocols.
+
 
 Protocols
 ---------
@@ -85,7 +88,8 @@ of its auto-detection class methods is likely more useful.
   After construction, :attr:`host`, :attr:`port` and :attr:`peername`
   are set to :const:`None`.
 
-  .. classmethod:: auto_detect_address(address, auth, \*, loop=None)
+  .. classmethod:: auto_detect_address(address, auth, \*, \
+                   loop=None, timeout=5.0)
 
      Try to detect a SOCKS proxy at *address*.
 
@@ -98,9 +102,13 @@ of its auto-detection class methods is likely more useful.
 
      *auth* is a :class:`SOCKSUserAuth` object or :const:`None`.
 
+     If testing any protocol takes more than *timeout* seconds, it is
+     timed out and taken as not detected.
+
      This class method is a `coroutine`_.
 
-  .. classmethod:: auto_detect_host(host, ports, auth, \*, loop=None)
+  .. classmethod:: auto_detect_host(host, ports, auth, \*, \
+                   loop=None, timeout=5.0)
 
      Try to detect a SOCKS proxy on *host* on one of the *ports*.
 
@@ -110,11 +118,14 @@ of its auto-detection class methods is likely more useful.
 
      *auth* is a :class:`SOCKSUserAuth` object or :const:`None`.
 
+     If testing any protocol on any port takes more than *timeout*
+     seconds, it is timed out and taken as not detected.
+
      This class method is a `coroutine`_.
 
   .. method:: create_connection(protocol_factory, host, port, \*, \
               resolve=False, loop=None, ssl=None, family=0, proto=0, \
-              flags=0)
+              flags=0, timeout=30.0)
 
      Connect to (host, port) through the proxy in the background.
      When successful, the coroutine returns a ``(transport,
@@ -128,6 +139,9 @@ of its auto-detection class methods is likely more useful.
        integers from the corresponding :mod:`socket` module constants.
 
      * *ssl* is as documented for `loop.create_connection()`_.
+
+     If connecting takes more than *timeout* seconds an
+     :exc:`asyncio.TimeoutError` exception is raised.
 
      This method is a `coroutine`_.
 

@@ -148,3 +148,32 @@ class JobQueue(object):
         # For some reason wait requires non-empty set...
         if self.tasks:
             await asyncio.wait(self.tasks)
+
+
+class Timeout(object):
+
+    def __init__(self, delay, loop=None):
+        self.loop = loop or asyncio.get_event_loop()
+        self.delay = delay
+        self.timed_out = False
+
+    def __enter__(self):
+        self.handle = self.loop.call_later(self.delay, self._timeout)
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.handle.cancel()
+        self.handle = None
+        self.task = None
+        if self.timed_out:
+            self.timed_out = exc_type is asyncio.CancelledError
+            if self.timed_out:
+                raise asyncio.TimeoutError
+
+    async def run(self, coro):
+        self.task = self.loop.create_task(coro)
+        return await self.task
+
+    def _timeout(self):
+        self.task.cancel()
+        self.timed_out = True
