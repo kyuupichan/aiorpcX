@@ -32,14 +32,24 @@ import socket
 import struct
 
 
-__all__ = ('SOCKSUserAuth', 'SOCKS4', 'SOCKS4a', 'SOCKS5', 'SOCKSProxy')
+__all__ = ('SOCKSUserAuth', 'SOCKS4', 'SOCKS4a', 'SOCKS5', 'SOCKSProxy',
+           'SOCKSError', 'SOCKSProtocolError', 'SOCKSFailure')
 
 
 SOCKSUserAuth = collections.namedtuple("SOCKSUserAuth", "username password")
 
 
 class SOCKSError(Exception):
-    pass
+    '''Base class for SOCKS exceptions.  Each raised exception will be
+    an instance of a derived class.'''
+
+
+class SOCKSProtocolError(SOCKSError):
+    '''Raised when the proxy does not follow the SOCKS protocol'''
+
+
+class SOCKSFailure(SOCKSError):
+    '''Raised when the proxy refuses or fails to make a connection'''
 
 
 class SOCKSBase(object):
@@ -90,12 +100,13 @@ class SOCKS4(SOCKSBase):
         # Wait for 8-byte response
         data = await loop.sock_recv(socket, 8)
         if len(data) != 8 or data[0] != 0:
-            raise SOCKSError(f'invalid {cls.name()} proxy response: {data}')
+            raise SOCKSProtocolError(f'invalid {cls.name()} proxy '
+                                     f'response: {data}')
         reply_code = data[1]
         if reply_code != 90:
             msg = cls.REPLY_CODES.get(
                 reply_code, f'unknown {cls.name()} reply code {reply_code}')
-            raise SOCKSError(f'{cls.name()} proxy request failed: {msg}')
+            raise SOCKSFailure(f'{cls.name()} proxy request failed: {msg}')
         # Remaining fields ignored
 
     @classmethod
@@ -132,11 +143,7 @@ class SOCKS5(SOCKSBase):
         # Initial handshake
         if isinstance(auth, SOCKSUserAuth):
             user_bytes = auth.username.encode()
-            if not 0 < len(user_bytes) < 256:
-                raise SOCKSError(f'invalid username length: {auth.username}')
             pwd_bytes = auth.password.encode()
-            if not 0 < len(pwd_bytes) < 256:
-                raise SOCKSError(f'invalid password length: {auth.password}')
             methods = [0, 2]
         else:
             methods = [0]
@@ -147,20 +154,26 @@ class SOCKS5(SOCKSBase):
         # Get response
         data = await loop.sock_recv(socket, 2)
         if len(data) != 2 or data[0] != 5:
-            raise SOCKSError(f'invalid SOCKS5 proxy response: {data}')
+            raise SOCKSProtocolError(f'invalid SOCKS5 proxy response: {data}')
         if data[1] not in methods:
-            raise SOCKSError('SOCKS5 proxy rejected authentication methods')
+            raise SOCKSFailure('SOCKS5 proxy rejected authentication methods')
 
         # Authenticate if user-password authentication
         if data[1] == 2:
+            if not 0 < len(user_bytes) < 256:
+                raise SOCKSFailure(f'invalid username length: {auth.username}')
+            if not 0 < len(pwd_bytes) < 256:
+                raise SOCKSFailure(f'invalid password length: {auth.password}')
             auth_msg = b''.join([bytes([1, len(user_bytes)]), user_bytes,
                                  bytes([len(pwd_bytes)]), pwd_bytes])
             await loop.sock_sendall(socket, auth_msg)
             data = await loop.sock_recv(socket, 2)
             if data[0] != 1 or len(data) != 2:
-                raise SOCKSError(f'invalid SOCKS5 proxy auth response: {data}')
+                raise SOCKSProtocolError(f'invalid SOCKS5 proxy auth '
+                                         f'response: {data}')
             if data[1] != 0:
-                raise SOCKSError(f'SOCKS5 proxy auth failure code: {data[1]}')
+                raise SOCKSFailure(f'SOCKS5 proxy auth failure code: '
+                                   f'{data[1]}')
 
         # Send connection request
         if isinstance(dst_host, ipaddress.IPv4Address):
@@ -170,7 +183,7 @@ class SOCKS5(SOCKSBase):
         else:
             host = dst_host.encode()
             if len(host) > 255:
-                raise SOCKSError(f'hostname too long: {len(host)} bytes')
+                raise SOCKSFailure(f'hostname too long: {len(host)} bytes')
             addr = b'\3' + bytes([len(host)]) + host
         data = b''.join([b'\5\1\0', addr, struct.pack('>H', dst_port)])
         await loop.sock_sendall(socket, data)
@@ -179,9 +192,9 @@ class SOCKS5(SOCKSBase):
         data = await loop.sock_recv(socket, 5)
         if (len(data) != 5 or data[0] != 5 or data[2] != 0
                 or data[3] not in (1, 3, 4)):
-            raise SOCKSError(f'invalid SOCKS5 proxy response: {data}')
+            raise SOCKSProtocolError(f'invalid SOCKS5 proxy response: {data}')
         if data[1] != 0:
-            raise SOCKSError(cls.ERROR_CODES.get(
+            raise SOCKSFailure(cls.ERROR_CODES.get(
                 data[1], f'unknown SOCKS5 error code: {data[1]}'))
         if data[3] == 1:
             addr_len, data = 3, data[4:]   # IPv4
@@ -192,7 +205,7 @@ class SOCKS5(SOCKSBase):
         remaining_len = addr_len + 2
         rest = await loop.sock_recv(socket, remaining_len)
         if len(rest) != remaining_len:
-            raise SOCKSError(f'short SOCKS5 proxy reply: {rest}')
+            raise SOCKSProtocolError(f'short SOCKS5 proxy reply: {rest}')
 
 
 class SOCKSProxy(object):
@@ -218,87 +231,102 @@ class SOCKSProxy(object):
         auth = 'username' if self.auth else 'none'
         return f'{self.protocol.name()} proxy at {self.address}, auth: {auth}'
 
+    async def _connect_one(self, host, port, loop):
+        '''Connect to the proxy and perform a handshake requesting a
+        connection to (host, port).
+
+        Return the open socket on success, or the exception on failure.
+        '''
+        sock = socket.socket()
+        try:
+            sock.setblocking(False)
+            await loop.sock_connect(sock, self.address)
+            await self.protocol.handshake(sock, host, port,
+                                          self.auth, loop)
+            self.host = host
+            self.port = port
+            self.peername = sock.getpeername()
+            return sock
+        except Exception as e:
+            sock.close()
+            return e
+
     async def _connect(self, hosts, port, loop):
         '''Connect to the proxy and perform a handshake requesting it proxy
         a connection to (host, port) for each host in hosts.
 
         Return the open socket on success.
         '''
+        assert len(hosts) > 0
+
         exceptions = []
         for host in hosts:
-            sock = socket.socket()
-            try:
-                sock.setblocking(False)
-                await loop.sock_connect(sock, self.address)
-                await self.protocol.handshake(sock, host, port,
-                                              self.auth, loop)
-                break
-            except Exception as e:
-                sock.close()
-                exceptions.append(e)
+            sock = await self._connect_one(host, port, loop)
+            if isinstance(sock, socket.socket):
+                return sock
+            exceptions.append(sock)
 
-        if exceptions:
-            strings = set(str(exc) for exc in exceptions)
-            raise (exceptions[0] if len(strings) == 1 else
-                   OSError(f'multiple exceptions: {", ".join(strings)}'))
+        strings = set(str(exc) for exc in exceptions)
+        raise (exceptions[0] if len(strings) == 1 else
+               OSError(f'multiple exceptions: {", ".join(strings)}'))
 
-        self.host = host
-        self.port = port
-        self.peername = sock.getpeername()
-        return sock
-
-    async def _test_connection(self, loop):
-        # This can raise an exception.
+    async def _detect_proxy(self, loop):
+        '''Return True if it appears we can connect to a SOCKS proxy,
+        otherwise False.
+        '''
         if self.protocol is SOCKS4a:
             host, port = 'www.google.com', 80
         else:
             host, port = ipaddress.IPv4Address('8.8.8.8'), 53
 
-        sock = await self._connect([host], port, loop)
-        sock.close()
+        sock = await self._connect_one(host, port, loop)
+        if isinstance(sock, socket.socket):
+            sock.close()
+            return True
+
+        # SOCKSFailure indicates something failed, but that we are
+        # likely talking to a proxy
+        return isinstance(sock, SOCKSFailure)
 
     @classmethod
     async def auto_detect_address(cls, address, auth, *, loop=None):
         '''Try to detect a SOCKS proxy at address using the authentication
         method (or None).  SOCKS5, SOCKS4a and SOCKS are tried in
-        order; a SOCKSProxy object for the first protocol to succeed
-        is returned.
+        order.  If a SOCKS proxy is detected a SOCKSProxy object is
+        returned.
 
-        If all fail return a list of failure messages, one for each
-        protocol in order.
+        Returning a SOCKSProxy does not mean it is functioning - for
+        example, it may have no network connectivity.
+
+        If no proxy is detected return None.
         '''
         loop = loop or asyncio.get_event_loop()
-        failures = []
         for protocol in (SOCKS5, SOCKS4a, SOCKS4):
             proxy = cls(address, protocol, auth)
-            try:
-                await proxy._test_connection(loop)
+            if await proxy._detect_proxy(loop):
                 return proxy
-            except Exception as e:
-                failures.append(f'{protocol.name()} proxy detection at '
-                                f'{address} failed: {e}')
-        return failures
+        return None
 
     @classmethod
     async def auto_detect_host(cls, host, ports, auth, *, loop=None):
         '''Try to detect a SOCKS proxy on a host on one of the ports.
 
         Calls auto_detect for the ports in order.  Returns SOCKS are
-        tried in order; a SOCKSProxy object for the first successful
-        connection is returned.
+        tried in order; a SOCKSProxy object for the first detected
+        proxy is returned.
 
-        If all fail return a list of failure messages, three for each
-        port, in order.
+        Returning a SOCKSProxy does not mean it is functioning - for
+        example, it may have no network connectivity.
+
+        If no proxy is detected return None.
         '''
-        failures = []
         for port in ports:
             address = (host, port)
-            result = await cls.auto_detect_address(address, auth, loop=loop)
-            if isinstance(result, cls):
-                return result
-            failures.extend(result)
+            proxy = await cls.auto_detect_address(address, auth, loop=loop)
+            if proxy:
+                return proxy
 
-        return failures
+        return None
 
     async def create_connection(self, protocol_factory, host, port, *,
                                 resolve=False, loop=None, ssl=None,

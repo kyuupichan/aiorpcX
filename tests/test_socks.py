@@ -7,8 +7,9 @@ import struct
 
 import pytest
 
-from aiorpcx.socks import (SOCKS4, SOCKS4a, SOCKS5, SOCKSProxy,
-                           SOCKSError, SOCKSUserAuth, SOCKSBase)
+from aiorpcx.socks import SOCKSBase
+from aiorpcx import *
+
 
 PORT = 8484
 GDNS = (ipaddress.IPv4Address('8.8.8.8'), 53)
@@ -76,6 +77,8 @@ def test_server_start(proxy_address):
 
 
 def test_base():
+    assert isinstance(SOCKSProtocolError(), SOCKSError)
+    assert isinstance(SOCKSFailure(), SOCKSError)
     loop = asyncio.get_event_loop()
     coro = SOCKSBase.handshake(None, None, None, None, loop=loop)
     with pytest.raises(NotImplementedError):
@@ -94,38 +97,44 @@ class TestSOCKS4(object):
                                        + struct.pack('>H', addr[1])
                                        + addr[0].packed + user_id + b'\0')]
 
-    def assert_raises(self, auth, response, text):
+    def assert_raises(self, auth, response, text, exc):
         FakeServer.responses = [response]
         loop, socket = server_socket()
         coro = SOCKS4.handshake(socket, *GDNS, auth, loop=loop)
-        with pytest.raises(SOCKSError) as err:
+        with pytest.raises(exc) as err:
             loop.run_until_complete(coro)
         assert text in str(err.value)
 
     def test_short_response(self, auth):
         response = bytes([0, 90, 0, 0, 0, 0, 0])
-        self.assert_raises(auth, response, 'invalid SOCKS4 proxy response')
+        self.assert_raises(auth, response, 'invalid SOCKS4 proxy response',
+                           SOCKSProtocolError)
 
     def test_request_rejected_89(self, auth):
         response = bytes([0, 89, 0, 0, 0, 0, 0, 0])
-        self.assert_raises(auth, response, 'unknown SOCKS4 reply code 89')
+        self.assert_raises(auth, response, 'unknown SOCKS4 reply code 89',
+                           SOCKSFailure)
 
     def test_request_rejected_91(self, auth):
         response = bytes([0, 91, 0, 0, 0, 0, 0, 0])
-        self.assert_raises(auth, response, 'request rejected or failed')
+        self.assert_raises(auth, response, 'request rejected or failed',
+                           SOCKSFailure)
 
     def test_request_rejected_92(self, auth):
         response = bytes([0, 92, 0, 0, 0, 0, 0, 0])
-        self.assert_raises(auth, response, 'cannot connect to identd')
+        self.assert_raises(auth, response, 'cannot connect to identd',
+                           SOCKSFailure)
 
     def test_request_rejected_93(self, auth):
         response = bytes([0, 93, 0, 0, 0, 0, 0, 0])
-        self.assert_raises(auth, response, 'report different')
+        self.assert_raises(auth, response, 'report different',
+                           SOCKSFailure)
 
     def test_response_bad_first_byte(self, auth):
         first_byte = random.randrange(1, 256)
         response = bytes([first_byte, 90, 0, 0, 0, 0, 0, 0])
-        self.assert_raises(auth, response, 'invalid SOCKS4 proxy response')
+        self.assert_raises(auth, response, 'invalid SOCKS4 proxy response',
+                           SOCKSProtocolError)
 
     def test_good_response(self, auth):
         response = bytes([0, 90]) + os.urandom(6)
@@ -167,43 +176,46 @@ class TestSOCKS4a(object):
                                         + ip_packed + user_id + b'\0'
                                         + host_bytes)]
 
-    def assert_raises(self, auth, addr, response, text):
+    def assert_raises(self, auth, addr, response, text, exc):
         FakeServer.responses = [response]
         loop, socket = server_socket()
         coro = SOCKS4a.handshake(socket, *addr, auth, loop=loop)
-        with pytest.raises(SOCKSError) as err:
+        with pytest.raises(exc) as err:
             loop.run_until_complete(coro)
         assert text in str(err.value)
 
     def test_short_response(self, auth, addr4a):
         response = bytes([0, 90, 0, 0, 0, 0, 0])
         self.assert_raises(auth, addr4a, response,
-                           'invalid SOCKS4a proxy response')
+                           'invalid SOCKS4a proxy response',
+                           SOCKSProtocolError)
 
     def test_request_rejected_89(self, auth, addr4a):
         response = bytes([0, 89, 0, 0, 0, 0, 0, 0])
         self.assert_raises(auth, addr4a, response,
-                           'unknown SOCKS4a reply code 89')
+                           'unknown SOCKS4a reply code 89', SOCKSFailure)
 
     def test_request_rejected_91(self, auth, addr4a):
         response = bytes([0, 91, 0, 0, 0, 0, 0, 0])
         self.assert_raises(auth, addr4a, response,
-                           'request rejected or failed')
+                           'request rejected or failed', SOCKSFailure)
 
     def test_request_rejected_92(self, auth, addr4a):
         response = bytes([0, 92, 0, 0, 0, 0, 0, 0])
         self.assert_raises(auth, addr4a, response,
-                           'cannot connect to identd')
+                           'cannot connect to identd', SOCKSFailure)
 
     def test_request_rejected_93(self, auth, addr4a):
         response = bytes([0, 93, 0, 0, 0, 0, 0, 0])
-        self.assert_raises(auth, addr4a, response, 'report different')
+        self.assert_raises(auth, addr4a, response, 'report different',
+                           SOCKSFailure)
 
     def test_response_bad_first_byte(self, auth, addr4a):
         first_byte = random.randrange(1, 256)
         response = bytes([first_byte, 90, 0, 0, 0, 0, 0, 0])
         self.assert_raises(auth, addr4a, response,
-                           'invalid SOCKS4a proxy response')
+                           'invalid SOCKS4a proxy response',
+                           SOCKSProtocolError)
 
     def test_good_response(self, auth, addr4a):
         response = bytes([0, 90]) + os.urandom(6)
@@ -266,11 +278,11 @@ class TestSOCKS5(object):
         loop.run_until_complete(coro)
         assert FakeServer.received == received
 
-    def assert_raises(self, auth, addr, responses, text):
+    def assert_raises(self, auth, addr, responses, text, exc):
         FakeServer.responses = responses.copy()
         loop, socket = server_socket()
         coro = SOCKS5.handshake(socket, *addr, auth, loop=loop)
-        with pytest.raises(SOCKSError) as err:
+        with pytest.raises(exc) as err:
             loop.run_until_complete(coro)
         assert text in str(err.value)
 
@@ -281,57 +293,72 @@ class TestSOCKS5(object):
 
     def test_short_username(self, addr5):
         auth = SOCKSUserAuth(username='', password='password')
-        self.assert_raises(auth, addr5, [], 'invalid username')
+        responses = SOCKS5_good_responses(auth, 2)
+        self.assert_raises(auth, addr5, responses, 'invalid username',
+                           SOCKSFailure)
 
     def test_long_username(self, addr5):
         auth = SOCKSUserAuth(username='a' * 256, password='password')
-        self.assert_raises(auth, addr5, [], 'invalid username')
+        responses = SOCKS5_good_responses(auth, 2)
+        self.assert_raises(auth, addr5, responses, 'invalid username',
+                           SOCKSFailure)
 
     def test_short_password(self, addr5):
         auth = SOCKSUserAuth(username='username', password='')
-        self.assert_raises(auth, addr5, [], 'invalid password')
+        responses = SOCKS5_good_responses(auth, 2)
+        self.assert_raises(auth, addr5, responses, 'invalid password',
+                           SOCKSFailure)
 
     def test_long_password(self, addr5):
         auth = SOCKSUserAuth(username='username', password='p' * 256)
-        self.assert_raises(auth, addr5, [], 'invalid password')
+        responses = SOCKS5_good_responses(auth, 2)
+        self.assert_raises(auth, addr5, responses, 'invalid password',
+                           SOCKSFailure)
 
     def test_reject_auth1(self, auth, addr5):
         responses = [b'\5\xff']
         self.assert_raises(auth, addr5, responses,
-                           'SOCKS5 proxy rejected authentication methods')
+                           'SOCKS5 proxy rejected authentication methods',
+                           SOCKSFailure)
 
     def test_reject_auth2(self, auth, addr5):
         responses = [b'\5\1']
         self.assert_raises(auth, addr5, responses,
-                           'SOCKS5 proxy rejected authentication methods')
+                           'SOCKS5 proxy rejected authentication methods',
+                           SOCKSFailure)
 
     def test_bad_proto_version(self, auth, addr5):
         responses = [b'\4\0']
         self.assert_raises(auth, addr5, responses,
-                           'invalid SOCKS5 proxy response')
+                           'invalid SOCKS5 proxy response',
+                           SOCKSProtocolError)
 
     def test_bad_short(self, auth, addr5):
         responses = [b'\5']
         self.assert_raises(auth, addr5, responses,
-                           'invalid SOCKS5 proxy response')
+                           'invalid SOCKS5 proxy response',
+                           SOCKSProtocolError)
 
     def test_short_auth_response(self, addr5):
         auth = auth_methods[1]
         responses = [b'\5\2', b'\1']
         self.assert_raises(auth, addr5, responses,
-                           'invalid SOCKS5 proxy auth response')
+                           'invalid SOCKS5 proxy auth response',
+                           SOCKSProtocolError)
 
     def test_bad_auth_response2(self, addr5):
         auth = auth_methods[1]
         responses = [b'\5\2', b'\0\0']
         self.assert_raises(auth, addr5, responses,
-                           'invalid SOCKS5 proxy auth response')
+                           'invalid SOCKS5 proxy auth response',
+                           SOCKSProtocolError)
 
     def test_bad_auth_response3(self, addr5):
         auth = auth_methods[1]
         responses = [b'\5\2', b'\1\2']
         self.assert_raises(auth, addr5, responses,
-                           'SOCKS5 proxy auth failure code')
+                           'SOCKS5 proxy auth failure code',
+                           SOCKSFailure)
 
     def test_long_host(self, auth):
         if auth is None:
@@ -339,7 +366,7 @@ class TestSOCKS5(object):
         else:
             responses = [b'\5\2', b'\1\0']
         self.assert_raises(auth, ('a' * 256, 500), responses,
-                           'hostname too long')
+                           'hostname too long', SOCKSFailure)
 
     def test_bad_connection_request_response1(self, auth, chosen_auth, addr5):
         if chosen_auth == 2 and auth is None:
@@ -347,7 +374,8 @@ class TestSOCKS5(object):
         responses = SOCKS5_good_responses(auth, chosen_auth)
         responses[-1][0] = 4
         self.assert_raises(auth, addr5, responses,
-                           'invalid SOCKS5 proxy response')
+                           'invalid SOCKS5 proxy response',
+                           SOCKSProtocolError)
 
     def test_bad_connection_request_response2(self, auth, chosen_auth, addr5):
         if chosen_auth == 2 and auth is None:
@@ -355,7 +383,8 @@ class TestSOCKS5(object):
         responses = SOCKS5_good_responses(auth, chosen_auth)
         responses[-1][2] = 1
         self.assert_raises(auth, addr5, responses,
-                           'invalid SOCKS5 proxy response')
+                           'invalid SOCKS5 proxy response',
+                           SOCKSProtocolError)
 
     def test_bad_connection_request_response3(self, auth, chosen_auth, addr5):
         if chosen_auth == 2 and auth is None:
@@ -363,7 +392,8 @@ class TestSOCKS5(object):
         responses = SOCKS5_good_responses(auth, chosen_auth)
         responses[-1][3] = 2
         self.assert_raises(auth, addr5, responses,
-                           'invalid SOCKS5 proxy response')
+                           'invalid SOCKS5 proxy response',
+                           SOCKSProtocolError)
 
     def test_bad_connection_request_response4(self, auth, chosen_auth, addr5):
         if chosen_auth == 2 and auth is None:
@@ -371,31 +401,31 @@ class TestSOCKS5(object):
         responses = SOCKS5_good_responses(auth, chosen_auth)
         responses[-1][1] = 1
         self.assert_raises(auth, addr5, responses,
-                           'general SOCKS server failure')
+                           'general SOCKS server failure', SOCKSFailure)
         responses[-1][1] = 2
         self.assert_raises(auth, addr5, responses,
-                           'connection not allowed by ruleset')
+                           'connection not allowed by ruleset', SOCKSFailure)
         responses[-1][1] = 3
         self.assert_raises(auth, addr5, responses,
-                           'network unreachable')
+                           'network unreachable', SOCKSFailure)
         responses[-1][1] = 4
         self.assert_raises(auth, addr5, responses,
-                           'host unreachable')
+                           'host unreachable', SOCKSFailure)
         responses[-1][1] = 5
         self.assert_raises(auth, addr5, responses,
-                           'connection refused')
+                           'connection refused', SOCKSFailure)
         responses[-1][1] = 6
         self.assert_raises(auth, addr5, responses,
-                           'TTL expired')
+                           'TTL expired', SOCKSFailure)
         responses[-1][1] = 7
         self.assert_raises(auth, addr5, responses,
-                           'command not supported')
+                           'command not supported', SOCKSFailure)
         responses[-1][1] = 8
         self.assert_raises(auth, addr5, responses,
-                           'address type not supported')
+                           'address type not supported', SOCKSFailure)
         responses[-1][1] = 9
         self.assert_raises(auth, addr5, responses,
-                           'unknown SOCKS5 error code: 9')
+                           'unknown SOCKS5 error code: 9', SOCKSFailure)
 
     def test_short_final_reply1(self, auth, chosen_auth, addr5):
         if chosen_auth == 2 and auth is None:
@@ -403,7 +433,8 @@ class TestSOCKS5(object):
         responses = SOCKS5_good_responses(auth, chosen_auth)
         responses[-1] = responses[-1][:4]
         self.assert_raises(auth, addr5, responses,
-                           'invalid SOCKS5 proxy response')
+                           'invalid SOCKS5 proxy response',
+                           SOCKSProtocolError)
 
     def test_short_final_reply2(self, auth, chosen_auth, addr5):
         if chosen_auth == 2 and auth is None:
@@ -411,7 +442,8 @@ class TestSOCKS5(object):
         responses = SOCKS5_good_responses(auth, chosen_auth)
         responses[-1].pop()
         self.assert_raises(auth, addr5, responses,
-                           'short SOCKS5 proxy reply')
+                           'short SOCKS5 proxy reply',
+                           SOCKSProtocolError)
 
 
 class TestSOCKSProxy(object):
@@ -420,13 +452,13 @@ class TestSOCKSProxy(object):
         coro = SOCKSProxy.auto_detect_address(('8.8.8.8', 53), None)
         loop = asyncio.get_event_loop()
         result = loop.run_until_complete(coro)
-        assert isinstance(result, list)
+        assert result is None
 
     def test_cannot_connect(self):
         coro = SOCKSProxy.auto_detect_address(('0.0.0.0', 53), None)
         loop = asyncio.get_event_loop()
         result = loop.run_until_complete(coro)
-        assert isinstance(result, list)
+        assert result is None
 
     def test_good_SOCKS5(self, auth):
         loop = asyncio.get_event_loop()
@@ -485,8 +517,7 @@ class TestSOCKSProxy(object):
         ports = [1, 2]
         coro = SOCKSProxy.auto_detect_host('localhost', ports, auth, loop=loop)
         result = loop.run_until_complete(coro)
-        assert isinstance(result, list)
-        assert len(result) == 3 * len(ports)
+        assert result is None
 
     def test_create_connection_connect_failure(self, auth):
         loop = asyncio.get_event_loop()
@@ -502,7 +533,7 @@ class TestSOCKSProxy(object):
         proxy = SOCKSProxy(('localhost', PORT), SOCKS5, auth)
         loop = asyncio.get_event_loop()
         coro = proxy.create_connection(None, *GCOM, loop=loop)
-        with pytest.raises(SOCKSError):
+        with pytest.raises(SOCKSProtocolError):
             loop.run_until_complete(coro)
 
     def test_create_connection_good(self, auth):
