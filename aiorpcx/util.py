@@ -168,7 +168,7 @@ class Timeout(object):
         if self.timed_out:
             self.timed_out = exc_type is asyncio.CancelledError
             if self.timed_out:
-                raise asyncio.TimeoutError
+                raise asyncio.TimeoutError from None
 
     async def run(self, coro):
         self.task = self.loop.create_task(coro)
