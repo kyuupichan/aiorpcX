@@ -45,7 +45,7 @@ class SOCKSError(Exception):
 class SOCKSBase(object):
 
     @classmethod
-    async def handshake(cls, socket, dst_host, dst_port, auth, *, loop):
+    async def handshake(cls, socket, dst_host, dst_port, auth, loop):
         raise NotImplementedError
 
     @classmethod
@@ -99,7 +99,7 @@ class SOCKS4(SOCKSBase):
         # Remaining fields ignored
 
     @classmethod
-    async def handshake(cls, socket, dst_host, dst_port, auth, *, loop):
+    async def handshake(cls, socket, dst_host, dst_port, auth, loop):
         assert isinstance(dst_host, ipaddress.IPv4Address)
         await cls._handshake(socket, dst_host, dst_port, auth, loop)
 
@@ -107,7 +107,7 @@ class SOCKS4(SOCKSBase):
 class SOCKS4a(SOCKS4):
 
     @classmethod
-    async def handshake(cls, socket, dst_host, dst_port, auth, *, loop):
+    async def handshake(cls, socket, dst_host, dst_port, auth, loop):
         assert isinstance(dst_host, (str, ipaddress.IPv4Address))
         await cls._handshake(socket, dst_host, dst_port, auth, loop)
 
@@ -128,7 +128,7 @@ class SOCKS5(SOCKSBase):
     }
 
     @classmethod
-    async def handshake(cls, socket, dst_host, dst_port, auth, *, loop):
+    async def handshake(cls, socket, dst_host, dst_port, auth, loop):
         # Initial handshake
         if isinstance(auth, SOCKSUserAuth):
             user_bytes = auth.username.encode()
@@ -198,8 +198,12 @@ class SOCKS5(SOCKSBase):
 class SOCKSProxy(object):
 
     def __init__(self, address, protocol, auth):
-        '''For IPv4, address is a (host, port) pair.  For IPv6, address should
-        be a (host, port, flowinfo, scopeid) 4-tuple.'''
+        '''A SOCKS proxy at an address following a SOCKS protocol.  auth is an
+        authentication method to use when connecting, or None.
+
+        address is a (host, port) pair; for IPv6 it can instead be a
+        (host, port, flowinfo, scopeid) 4-tuple.
+        '''
         self.address = address
         self.protocol = protocol
         self.auth = auth
@@ -220,8 +224,7 @@ class SOCKSProxy(object):
         try:
             sock.setblocking(False)
             await loop.sock_connect(sock, self.address)
-            await self.protocol.handshake(sock, host, port, self.auth,
-                                          loop=loop)
+            await self.protocol.handshake(sock, host, port, self.auth, loop)
             sock2 = None
         finally:
             if sock2:
@@ -241,7 +244,15 @@ class SOCKSProxy(object):
         socket.close()
 
     @classmethod
-    async def auto_detect(cls, address, auth, *, loop=None):
+    async def auto_detect_address(cls, address, auth, *, loop=None):
+        '''Try to detect a SOCKS proxy at address using the authentication
+        method (or None).  SOCKS5, SOCKS4a and SOCKS are tried in
+        order; a SOCKSProxy object for the first protocol to succeed
+        is returned.
+
+        If all fail return a list of failure messages, one for each
+        protocol in order.
+        '''
         loop = loop or asyncio.get_event_loop()
         failures = []
         for protocol in (SOCKS5, SOCKS4a, SOCKS4):
@@ -256,9 +267,19 @@ class SOCKSProxy(object):
 
     @classmethod
     async def auto_detect_host(cls, host, ports, auth, *, loop=None):
+        '''Try to detect a SOCKS proxy on a host on one of the ports.
+
+        Calls auto_detect for the ports in order.  Returns SOCKS are
+        tried in order; a SOCKSProxy object for the first successful
+        connection is returned.
+
+        If all fail return a list of failure messages, three for each
+        port, in order.
+        '''
         failures = []
         for port in ports:
-            result = await cls.auto_detect((host, port), auth, loop=loop)
+            address = (host, port)
+            result = await cls.auto_detect_address(address, auth, loop=loop)
             if isinstance(result, cls):
                 return result
             failures.extend(result)

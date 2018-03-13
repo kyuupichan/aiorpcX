@@ -417,13 +417,13 @@ class TestSOCKS5(object):
 class TestSOCKSProxy(object):
 
     def test_failure(self):
-        coro = SOCKSProxy.auto_detect(('8.8.8.8', 53), None)
+        coro = SOCKSProxy.auto_detect_address(('8.8.8.8', 53), None)
         loop = asyncio.get_event_loop()
         result = loop.run_until_complete(coro)
         assert isinstance(result, list)
 
     def test_cannot_connect(self):
-        coro = SOCKSProxy.auto_detect(('0.0.0.0', 53), None)
+        coro = SOCKSProxy.auto_detect_address(('0.0.0.0', 53), None)
         loop = asyncio.get_event_loop()
         result = loop.run_until_complete(coro)
         assert isinstance(result, list)
@@ -432,8 +432,8 @@ class TestSOCKSProxy(object):
         loop = asyncio.get_event_loop()
         chosen_auth = 2 if auth else 0
         FakeServer.responses = SOCKS5_good_responses(auth, chosen_auth)
-        coro = SOCKSProxy.auto_detect(FakeServer.proxy_address,
-                                      auth, loop=loop)
+        coro = SOCKSProxy.auto_detect_address(FakeServer.proxy_address,
+                                              auth, loop=loop)
         result = loop.run_until_complete(coro)
         assert isinstance(result, SOCKSProxy)
         assert result.protocol is SOCKS5
@@ -445,8 +445,8 @@ class TestSOCKSProxy(object):
         loop = asyncio.get_event_loop()
         FakeServer.responses = [bytes([1, 90]),
                                 bytes([0, 90]) + os.urandom(6)]
-        coro = SOCKSProxy.auto_detect(FakeServer.proxy_address,
-                                      auth, loop=loop)
+        coro = SOCKSProxy.auto_detect_address(FakeServer.proxy_address,
+                                              auth, loop=loop)
         result = loop.run_until_complete(coro)
         assert isinstance(result, SOCKSProxy)
         assert result.protocol is SOCKS4a
@@ -458,8 +458,8 @@ class TestSOCKSProxy(object):
         loop = asyncio.get_event_loop()
         FakeServer.responses = [bytes([1, 90]), bytes([1, 90]),
                                 bytes([0, 90]) + os.urandom(6)]
-        coro = SOCKSProxy.auto_detect(FakeServer.proxy_address,
-                                      auth, loop=loop)
+        coro = SOCKSProxy.auto_detect_address(FakeServer.proxy_address,
+                                              auth, loop=loop)
         result = loop.run_until_complete(coro)
         assert isinstance(result, SOCKSProxy)
         assert result.protocol is SOCKS4
