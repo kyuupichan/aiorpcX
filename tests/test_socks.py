@@ -516,8 +516,39 @@ class TestSOCKSProxy(object):
         loop = asyncio.get_event_loop()
         coro = proxy.create_connection(MyProtocol, *GCOM, loop=loop)
         transport, protocol = loop.run_until_complete(coro)
+        assert proxy.host == GCOM[0]
+        assert proxy.port == GCOM[1]
+        assert proxy.peername == ('127.0.0.1', PORT)
         assert isinstance(protocol, MyProtocol)
         transport.close()
+
+    def test_create_connection_resolve_good(self, auth):
+        class MyProtocol(asyncio.Protocol):
+            pass
+
+        loop = asyncio.get_event_loop()
+        chosen_auth = 2 if auth else 0
+        FakeServer.responses = SOCKS5_good_responses(auth, chosen_auth)
+        proxy = SOCKSProxy(('localhost', PORT), SOCKS5, auth)
+        loop = asyncio.get_event_loop()
+        coro = proxy.create_connection(MyProtocol, *GCOM, resolve=True)
+        transport, protocol = loop.run_until_complete(coro)
+        assert proxy.host not in (None, GCOM[0])
+        assert proxy.port == GCOM[1]
+        assert proxy.peername == ('127.0.0.1', PORT)
+        assert isinstance(protocol, MyProtocol)
+        transport.close()
+
+    def test_create_connection_resolve_bad(self, auth):
+        loop = asyncio.get_event_loop()
+        chosen_auth = 2 if auth else 0
+        FakeServer.responses = SOCKS5_good_responses(auth, chosen_auth)
+        proxy = SOCKSProxy(('localhost', PORT), SOCKS5, auth)
+        loop = asyncio.get_event_loop()
+        coro = proxy.create_connection(None, 'foobar.onion', 50000,
+                                       resolve=True)
+        with pytest.raises(OSError):
+            loop.run_until_complete(coro)
 
 
 def test_str():

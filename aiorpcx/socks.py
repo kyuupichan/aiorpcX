@@ -207,29 +207,43 @@ class SOCKSProxy(object):
         self.address = address
         self.protocol = protocol
         self.auth = auth
-        # Set on a successful handshake with the proxy; the result of
-        # socket.getpeername()
+        # These three are set on a successful handshake with the proxy
+        # requesting a connection to (host, port).  peername is the
+        # proxy peername, from socket.getpeername()
+        self.host = None
+        self.port = None
         self.peername = None
 
     def __str__(self):
         auth = 'username' if self.auth else 'none'
         return f'{self.protocol.name()} proxy at {self.address}, auth: {auth}'
 
-    async def _connect(self, host, port, loop):
-        '''Connect to the proxy and perform a handshake.
+    async def _connect(self, hosts, port, loop):
+        '''Connect to the proxy and perform a handshake requesting it proxy
+        a connection to (host, port) for each host in hosts.
 
         Return the open socket on success.
         '''
-        sock = sock2 = socket.socket()
-        try:
-            sock.setblocking(False)
-            await loop.sock_connect(sock, self.address)
-            await self.protocol.handshake(sock, host, port, self.auth, loop)
-            sock2 = None
-        finally:
-            if sock2:
-                sock2.close()
+        exceptions = []
+        for host in hosts:
+            sock = socket.socket()
+            try:
+                sock.setblocking(False)
+                await loop.sock_connect(sock, self.address)
+                await self.protocol.handshake(sock, host, port,
+                                              self.auth, loop)
+                break
+            except Exception as e:
+                sock.close()
+                exceptions.append(e)
 
+        if exceptions:
+            strings = set(str(exc) for exc in exceptions)
+            raise (exceptions[0] if len(strings) == 1 else
+                   OSError(f'multiple exceptions: {", ".join(strings)}'))
+
+        self.host = host
+        self.port = port
         self.peername = sock.getpeername()
         return sock
 
@@ -240,8 +254,8 @@ class SOCKSProxy(object):
         else:
             host, port = ipaddress.IPv4Address('8.8.8.8'), 53
 
-        socket = await self._connect(host, port, loop)
-        socket.close()
+        sock = await self._connect([host], port, loop)
+        sock.close()
 
     @classmethod
     async def auto_detect_address(cls, address, auth, *, loop=None):
@@ -287,15 +301,28 @@ class SOCKSProxy(object):
         return failures
 
     async def create_connection(self, protocol_factory, host, port, *,
-                                loop=None, ssl=None):
+                                resolve=False, loop=None, ssl=None,
+                                family=0, proto=0, flags=0):
         '''Set up a connection to (host, port) through the proxy.
+
+        If resolve is True then host is resolved locally with
+        getaddrinfo using family, proto and flags, otherwise the proxy
+        is asked to resolve host.
 
         The function signature is similar to loop.create_connection()
         and the result is the same.  Additionally raises SOCKSError if
         something goes wrong with the proxy handshake.
         '''
         loop = loop or asyncio.get_event_loop()
-        socket = await self._connect(host, port, loop)
+        if resolve:
+            infos = await loop.getaddrinfo(host, port, family=family,
+                                           type=socket.SOCK_STREAM,
+                                           proto=proto, flags=flags)
+            hosts = [info[4][0] for info in infos]
+        else:
+            hosts = [host]
+
+        sock = await self._connect(hosts, port, loop)
         return await loop.create_connection(
-            protocol_factory, sock=socket, ssl=ssl,
+            protocol_factory, sock=sock, ssl=ssl,
             server_hostname=host if ssl else None)
