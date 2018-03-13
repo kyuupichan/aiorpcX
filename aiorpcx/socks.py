@@ -111,7 +111,12 @@ class SOCKS4(SOCKSBase):
 
     @classmethod
     async def handshake(cls, socket, dst_host, dst_port, auth, loop):
-        assert isinstance(dst_host, ipaddress.IPv4Address)
+        if not isinstance(dst_host, ipaddress.IPv4Address):
+            try:
+                dst_host = ipaddress.IPv4Address(dst_host)
+            except ValueError:
+                raise SOCKSProtocolError(
+                    f'SOCKS4 requires an IPv4 address: {dst_host}') from None
         await cls._handshake(socket, dst_host, dst_port, auth, loop)
 
 
@@ -119,7 +124,9 @@ class SOCKS4a(SOCKS4):
 
     @classmethod
     async def handshake(cls, socket, dst_host, dst_port, auth, loop):
-        assert isinstance(dst_host, (str, ipaddress.IPv4Address))
+        if not isinstance(dst_host, (str, ipaddress.IPv4Address)):
+            raise SOCKSProtocolError(
+                f'SOCKS4a requires an IPv4 address or host name: {dst_host}')
         await cls._handshake(socket, dst_host, dst_port, auth, loop)
 
 
@@ -140,6 +147,11 @@ class SOCKS5(SOCKSBase):
 
     @classmethod
     async def handshake(cls, socket, dst_host, dst_port, auth, loop):
+        if not isinstance(dst_host, (str, ipaddress.IPv4Address,
+                                     ipaddress.IPv6Address)):
+            raise SOCKSProtocolError(f'SOCKS5 requires an IPv4 address, IPv6 '
+                                     f'address, or host name: {dst_host}')
+
         # Initial handshake
         if isinstance(auth, SOCKSUserAuth):
             user_bytes = auth.username.encode()
@@ -241,8 +253,7 @@ class SOCKSProxy(object):
         try:
             sock.setblocking(False)
             await loop.sock_connect(sock, self.address)
-            await self.protocol.handshake(sock, host, port,
-                                          self.auth, loop)
+            await self.protocol.handshake(sock, host, port, self.auth, loop)
             self.host = host
             self.port = port
             self.peername = sock.getpeername()

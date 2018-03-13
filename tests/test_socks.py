@@ -12,12 +12,16 @@ from aiorpcx import *
 
 
 PORT = 8484
-GDNS = (ipaddress.IPv4Address('8.8.8.8'), 53)
+GDNS_IPv4 = (ipaddress.IPv4Address('8.8.8.8'), 53)
+GDNS_str = ('8.8.8.8', 53)
 GCOM = ('www.google.com', 80)
-IPv6 = (ipaddress.IPv6Address('::'), 80)
+IPv6_IPv6 = (ipaddress.IPv6Address('::'), 80)
+IPv6_str = ('::', 80)
 auth_methods = [None, SOCKSUserAuth('user', 'pass')]
-SOCKS4a_addresses = (GDNS, GCOM)
-SOCKS5_addresses = (GDNS, GCOM, IPv6)
+
+SOCKS4_addresses = (GDNS_IPv4, GDNS_str)
+SOCKS4a_addresses = (GDNS_IPv4, GDNS_str, GCOM)
+SOCKS5_addresses = (GDNS_IPv4, GDNS_str, GCOM, IPv6_IPv6, IPv6_str)
 
 
 class FakeServer(asyncio.Protocol):
@@ -49,8 +53,23 @@ def auth(request):
     return request.param
 
 
+@pytest.fixture(params=SOCKS4_addresses)
+def addr4(request):
+    return request.param
+
+
+@pytest.fixture(params=set(SOCKS5_addresses) - set(SOCKS4_addresses))
+def addr4bad(request):
+    return request.param
+
+
 @pytest.fixture(params=SOCKS4a_addresses)
 def addr4a(request):
+    return request.param
+
+
+@pytest.fixture(params=set(SOCKS5_addresses) - set(SOCKS4a_addresses))
+def addr4abad(request):
     return request.param
 
 
@@ -87,20 +106,21 @@ def test_base():
 
 class TestSOCKS4(object):
 
-    def assert_good(self, auth, response, addr=GDNS):
+    def assert_good(self, auth, response, addr):
         FakeServer.responses = [response]
         loop, socket = server_socket()
         coro = SOCKS4.handshake(socket, *addr, auth, loop=loop)
         loop.run_until_complete(coro)
         user_id = b'' if not auth else auth.username.encode()
+        packed = ipaddress.IPv4Address(addr[0]).packed
         assert FakeServer.received == [(b'\4\1'
                                        + struct.pack('>H', addr[1])
-                                       + addr[0].packed + user_id + b'\0')]
+                                       + packed + user_id + b'\0')]
 
     def assert_raises(self, auth, response, text, exc):
         FakeServer.responses = [response]
         loop, socket = server_socket()
-        coro = SOCKS4.handshake(socket, *GDNS, auth, loop=loop)
+        coro = SOCKS4.handshake(socket, *GDNS_IPv4, auth, loop=loop)
         with pytest.raises(exc) as err:
             loop.run_until_complete(coro)
         assert text in str(err.value)
@@ -136,24 +156,16 @@ class TestSOCKS4(object):
         self.assert_raises(auth, response, 'invalid SOCKS4 proxy response',
                            SOCKSProtocolError)
 
-    def test_good_response(self, auth):
+    def test_good_response(self, auth, addr4):
         response = bytes([0, 90]) + os.urandom(6)
-        self.assert_good(auth, response)
+        self.assert_good(auth, response, GDNS_IPv4)
 
-    def test_rejects_domain(self, auth):
+    def test_rejects_others(self, auth, addr4bad):
         response = bytes([0, 90]) + os.urandom(6)
         FakeServer.responses = [response]
         loop, socket = server_socket()
-        coro = SOCKS4.handshake(socket, *GCOM, auth, loop=loop)
-        with pytest.raises(AssertionError):
-            loop.run_until_complete(coro)
-
-    def test_rejects_IPv6(self, auth):
-        response = bytes([0, 90]) + os.urandom(6)
-        FakeServer.responses = [response]
-        loop, socket = server_socket()
-        coro = SOCKS4.handshake(socket, *IPv6, auth, loop=loop)
-        with pytest.raises(AssertionError):
+        coro = SOCKS4.handshake(socket, *addr4bad, auth, loop=loop)
+        with pytest.raises(SOCKSProtocolError):
             loop.run_until_complete(coro)
 
 
@@ -221,12 +233,12 @@ class TestSOCKS4a(object):
         response = bytes([0, 90]) + os.urandom(6)
         self.assert_good(auth, addr4a, response)
 
-    def test_rejects_IPv6(self, auth):
+    def test_rejects_others(self, auth, addr4abad):
         response = bytes([0, 90]) + os.urandom(6)
         FakeServer.responses = [response]
         loop, socket = server_socket()
-        coro = SOCKS4.handshake(socket, *IPv6, auth, loop=loop)
-        with pytest.raises(AssertionError):
+        coro = SOCKS4.handshake(socket, *addr4abad, auth, loop=loop)
+        with pytest.raises(SOCKSProtocolError):
             loop.run_until_complete(coro)
 
 
