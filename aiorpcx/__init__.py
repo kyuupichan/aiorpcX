@@ -4,7 +4,7 @@ from .rpc import *
 from .socks import *
 from .util import *
 
-_version = (0, 4, 3)
+_version = (0, 4, 4)
 _version_str = '.'.join(str(part) for part in _version)
 
 __all__ = (framing.__all__ +
