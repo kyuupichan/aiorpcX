@@ -195,17 +195,6 @@ class SOCKS5(SOCKSBase):
             raise SOCKSError(f'short SOCKS5 proxy reply: {rest}')
 
 
-async def _socket(address, loop):
-    sock = socket.socket()
-    try:
-        sock.setblocking(False)
-        await loop.sock_connect(sock, address)
-    except BaseException:
-        sock.close()
-        raise
-    return sock
-
-
 class SOCKSProxy(object):
 
     def __init__(self, address, protocol, auth):
@@ -223,21 +212,23 @@ class SOCKSProxy(object):
         return f'{self.protocol.name()} proxy at {self.address}, auth: {auth}'
 
     async def _connect(self, host, port, loop):
-        '''Connect to the proxy and does a handshake.
+        '''Connect to the proxy and perform a handshake.
 
-        Return the open socket on success, otherwise raise an
-        exception.
+        Return the open socket on success.
         '''
-        socket = await _socket(self.address, loop)
+        sock = sock2 = socket.socket()
         try:
-            await self.protocol.handshake(socket, host, port, self.auth,
+            sock.setblocking(False)
+            await loop.sock_connect(sock, self.address)
+            await self.protocol.handshake(sock, host, port, self.auth,
                                           loop=loop)
-        except BaseException:
-            socket.close()
-            raise
+            sock2 = None
+        finally:
+            if sock2:
+                sock2.close()
 
-        self.peername = socket.getpeername()
-        return socket
+        self.peername = sock.getpeername()
+        return sock
 
     async def _test_connection(self, loop):
         # This can raise an exception.
