@@ -64,6 +64,16 @@ class SOCKSBase(object):
     def name(cls):
         return cls.__name__
 
+    @classmethod
+    async def sock_recv(cls, loop, socket, n):
+        result = b''
+        while len(result) < n:
+            data = await loop.sock_recv(socket, n - len(result))
+            if not data:
+                break
+            result += data
+        return result
+
 
 class SOCKS4(SOCKSBase):
     '''SOCKS4 protocol wrapper.'''
@@ -100,7 +110,7 @@ class SOCKS4(SOCKSBase):
         await loop.sock_sendall(socket, data)
 
         # Wait for 8-byte response
-        data = await loop.sock_recv(socket, 8)
+        data = await cls.sock_recv(loop, socket, 8)
         if len(data) != 8 or data[0] != 0:
             raise SOCKSProtocolError(f'invalid {cls.name()} proxy '
                                      f'response: {data}')
@@ -166,7 +176,7 @@ class SOCKS5(SOCKSBase):
         await loop.sock_sendall(socket, greeting)
 
         # Get response
-        data = await loop.sock_recv(socket, 2)
+        data = await cls.sock_recv(loop, socket, 2)
         if len(data) != 2 or data[0] != 5:
             raise SOCKSProtocolError(f'invalid SOCKS5 proxy response: {data}')
         if data[1] not in methods:
@@ -181,7 +191,7 @@ class SOCKS5(SOCKSBase):
             auth_msg = b''.join([bytes([1, len(user_bytes)]), user_bytes,
                                  bytes([len(pwd_bytes)]), pwd_bytes])
             await loop.sock_sendall(socket, auth_msg)
-            data = await loop.sock_recv(socket, 2)
+            data = await cls.sock_recv(loop, socket, 2)
             if data[0] != 1 or len(data) != 2:
                 raise SOCKSProtocolError(f'invalid SOCKS5 proxy auth '
                                          f'response: {data}')
@@ -203,7 +213,7 @@ class SOCKS5(SOCKSBase):
         await loop.sock_sendall(socket, data)
 
         # Get response
-        data = await loop.sock_recv(socket, 5)
+        data = await cls.sock_recv(loop, socket, 5)
         if (len(data) != 5 or data[0] != 5 or data[2] != 0
                 or data[3] not in (1, 3, 4)):
             raise SOCKSProtocolError(f'invalid SOCKS5 proxy response: {data}')
@@ -217,7 +227,7 @@ class SOCKS5(SOCKSBase):
         else:
             addr_len, data = 15, data[4:]  # IPv6
         remaining_len = addr_len + 2
-        rest = await loop.sock_recv(socket, remaining_len)
+        rest = await cls.sock_recv(loop, socket, remaining_len)
         if len(rest) != remaining_len:
             raise SOCKSProtocolError(f'short SOCKS5 proxy reply: {rest}')
 
