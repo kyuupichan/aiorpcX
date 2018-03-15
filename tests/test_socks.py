@@ -117,18 +117,12 @@ class FakeServer(asyncio.Protocol):
         else:
             n = self.buff.find(0, 8)
             if n != -1:
-                if self.buff[1] != 1:
-                    self.close(self.SOCKS4_fail_bytes(0x5b))
-                else:
-                    if self.buff[4:7] == b'\0\0\0' and self.buff[7]:
-                        if a:
-                            n = self.buff.find(0, n + 1)
-                        else:
-                            self.close(self.SOCKS4_fail_bytes(0x5b))
-                    if n != -1:
-                        result = self.buff[:n + 1]
-                        self.buff = self.buff[n + 1:]
-                        return result
+                if self.buff[4:7] == b'\0\0\0' and self.buff[7]:
+                    n = self.buff.find(0, n + 1)
+                if n != -1:
+                    result = self.buff[:n + 1]
+                    self.buff = self.buff[n + 1:]
+                    return result
 
     @classmethod
     def SOCKS5_response(cls):
@@ -137,9 +131,6 @@ class FakeServer(asyncio.Protocol):
 
     def SOCKS5(self, chosen_auth=0, greeting=None, auth_response=b'\1\0',
                req_response=None, split=False):
-        if len(self.buff) < 3 or self.buff[0] != 5:
-            self.close()
-            return
         n = 2 + self.buff[1]
         consume, self.buff = self.buff[:n], self.buff[n:]
         greeting = bytes([5, chosen_auth]) if greeting is None else greeting
@@ -154,15 +145,9 @@ class FakeServer(asyncio.Protocol):
                                         req_response, split)
 
     def SOCKS5_auth(self, auth_response, req_response, split):
-        if len(self.buff) < 2:
-            return
         uname_len = self.buff[1]
-        if len(self.buff) < 2 + uname_len + 1:
-            return
         pname_len = self.buff[2 + uname_len]
         n = 1 + uname_len + 1 + pname_len + 1
-        if len(self.buff) < n:
-            return
         consume, self.buff = self.buff[:n], self.buff[n:]
         if len(auth_response) < 2:
             self.close(auth_response)
@@ -171,16 +156,12 @@ class FakeServer(asyncio.Protocol):
         self.consume_func = partial(self.SOCKS5_req, req_response, split)
 
     def SOCKS5_req(self, req_response, split):
-        if len(self.buff) < 4:
-            return
         if self.buff[3] == 1:
             n = 6 + 4
         elif self.buff[3] == 3:
             n = 6 + 1 + self.buff[4]
         else:
             n = 6 + 16
-        if len(self.buff) < n:
-            return
         consume, self.buff = self.buff[:n], self.buff[n:]
         if req_response is None:
             req_response = self.SOCKS5_response()
@@ -503,13 +484,21 @@ class TestSOCKS5(object):
                     auth, addr5)
         assert 'invalid password' in str(err.value)
 
-    def test_reject_auth(self, lss5, addr5):
+    def test_auth_failure(self, lss5, addr5):
         auth = auth_methods[1]
         consumer = partial(lss5.server.SOCKS5, chosen_auth=2,
                            auth_response=b'\1\xff')
         with pytest.raises(SOCKSFailure) as err:
             connect(SOCKS5, lss5, consumer, auth, addr5)
         assert 'SOCKS5 proxy auth failure code: 255' in str(err.value)
+
+    def test_reject_auth_methods(self, lss5, addr5):
+        auth = auth_methods[1]
+        consumer = partial(lss5.server.SOCKS5, chosen_auth=2,
+                           greeting=b'\5\xff')
+        with pytest.raises(SOCKSFailure) as err:
+            connect(SOCKS5, lss5, consumer, auth, addr5)
+        assert 'SOCKS5 proxy rejected authentication methods' in str(err.value)
 
     def test_bad_proto_version(self, lss5, auth, addr5):
         consumer = partial(lss5.server.SOCKS5, greeting=b'\4\0')
