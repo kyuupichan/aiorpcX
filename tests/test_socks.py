@@ -235,11 +235,6 @@ def lss5(SOCKS5_address):
     yield from lss(SOCKS5_address)
 
 
-@pytest.fixture
-def lss_sleeper(sleeper_address):
-    yield from lss(sleeper_address)
-
-
 @pytest.fixture(params=[False, True])
 def split(request):
     return request.param
@@ -548,7 +543,7 @@ class TestSOCKS5(object):
             connect(SOCKS5, lss5, consumer, auth, addr5)
         assert 'invalid SOCKS5 proxy response' in str(err.value)
 
-    def test_bad_connection_request_response1(self, lss5, auth, chosen_auth,
+    def test_bad_connection_request_response2(self, lss5, auth, chosen_auth,
                                               addr5):
         if chosen_auth == 2 and auth is None:
             return
@@ -560,7 +555,7 @@ class TestSOCKS5(object):
             connect(SOCKS5, lss5, consumer, auth, addr5)
         assert 'invalid SOCKS5 proxy response' in str(err.value)
 
-    def test_bad_connection_request_response1(self, lss5, auth, chosen_auth,
+    def test_bad_connection_request_response3(self, lss5, auth, chosen_auth,
                                               addr5):
         if chosen_auth == 2 and auth is None:
             return

@@ -5,18 +5,8 @@ import time
 
 import pytest
 
-from aiorpcx.util import (SignatureInfo, signature_info, JobQueue,
+from aiorpcx.util import (SignatureInfo, signature_info, WorkQueue,
                           Timeout, is_async_call)
-
-
-class MyLogger(logging.Logger):
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.logged_msg = ''
-
-    def exception(self, msg, *args, exc_info=True, **kwargs):
-        self.logged_msg = msg
 
 
 async def coro(x, y):
@@ -69,232 +59,113 @@ def test_function_info():
     assert signature_info(f7) == SignatureInfo(1, None, ['x'], any)
     assert signature_info(f8) == SignatureInfo(2, 3, [], None)
 
+def run_briefly(loop):
+    async def once():
+        pass
+    gen = once()
+    t = loop.create_task(gen)
+    loop.run_until_complete(t)
 
-def test_job_queue():
-    jq = JobQueue(asyncio.get_event_loop())
-    assert not jq
-    assert not len(jq)
-    t = time.time()
-    jq.process_some(t + 5)
-    jq.process_some(t - 5)
-    jq.loop.run_until_complete(jq.wait_for_all())
-    assert time.time() < t + 0.1
-    assert not jq
-
-    counter = slept = 0
-
-    def job1():
-        nonlocal counter
-        counter += 1
-
-    def bad_job():
-        undefined_var
-
-    def slow_job():
-        nonlocal slept
-        time.sleep(0.01)
-        slept += 1
-
-    # Synchronous jobs
-    logger = MyLogger('test')
-    jq = JobQueue(asyncio.get_event_loop(), logger=logger)
-    jq.add_job(job1)
-    assert jq
-    assert len(jq) == 1
-    assert counter == 0
-    jq.add_job(job1)
-    assert len(jq) == 2
-    assert counter == 0 and jq
-    t = time.time()
-    jq.process_some(t)
-    assert counter == 0 and jq
-    jq.process_some(t - 1)
-    assert counter == 0 and jq
-    jq.process_some(t + 1)
-    assert counter == 2
-    assert not jq
-    assert not logger.logged_msg
-
-    # Timeouts work?
-    jq.add_job(slow_job)
-    jq.add_job(slow_job)
-    assert jq
-    assert len(jq) == 2
-    assert slept == 0
-    t = time.time()
-    # This will not allow any to complete
-    jq.process_some(time.time())
-    assert len(jq) == 2
-    # This will allow one to complete but then will exit
-    jq.process_some(time.time() + 0.01)
-    assert len(jq) == 1
-    assert slept == 1
-    # Let the last slow job finish
-    jq.process_some(time.time() + 0.01)
-    assert not jq
-    assert slept == 2
-
-    # Exception raising job
-    counter = 0
-    t = time.time()
-    jq.add_job(job1)
-    jq.add_job(bad_job)
-    assert len(jq) == 2
-    jq.process_some(t + 1)
-    assert counter == 1  # bad job doesn't touch
-    assert 'exception raised' in logger.logged_msg
-    assert not jq
-
-    # Async jobs
-    acounter = adone = 0
-
-    def ajob_done(task):
-        assert task.done()
-        nonlocal adone
-        adone += 1
-        task.result()  # Collect the result
-
-    async def ajob():
-        nonlocal acounter
-        acounter += 1
-
-    async def ajob_bad():
-        nonlocal acounter
-        acounter += 1
-        undefined_var
-
-    jq.add_coroutine(ajob(), ajob_done)
-    assert jq and len(jq) == 1
-    jq.add_coroutine(ajob(), ajob_done)
-    assert jq and len(jq) == 2
-    assert not adone and not acounter
-    jq.loop.run_until_complete(jq.wait_for_all())
-    assert not jq and len(jq) == 0
-    assert acounter == 2
-    assert adone == 2
-
-    # Null handlers
-    adone = acounter = 0
-    jq.add_coroutine(ajob(), None)
-    assert jq and len(jq) == 1
-    jq.add_coroutine(ajob(), None)
-    assert jq and len(jq) == 2
-    assert not adone and not acounter
-    jq.loop.run_until_complete(jq.wait_for_all())
-    assert not jq and len(jq) == 0
-    assert acounter == 2
-    assert adone == 0
-
-    # Bad handlers
-    logger.logged_msg = ''
-    t = time.time()
-    adone = acounter = 0
-    jq.add_coroutine(ajob_bad(), None)
-    assert jq and len(jq) == 1
-    assert not adone and not acounter
-    jq.loop.run_until_complete(jq.wait_for_all())
-    assert not jq and len(jq) == 0
-    assert acounter == 1
-    assert adone == 0
-    assert 'exception raised' in logger.logged_msg
-    logger.logged_msg = ''
-    jq.add_coroutine(ajob_bad(), ajob_done)
-    assert jq and len(jq) == 1
-    jq.loop.run_until_complete(jq.wait_for_all())
-    assert not jq and len(jq) == 0
-    assert acounter == 2
-    assert adone == 1
-    assert 'exception raised' in logger.logged_msg
+def test_wq_constructor():
+    wq = WorkQueue()
+    assert wq.loop == asyncio.get_event_loop()
+    event_loop = asyncio.new_event_loop()
+    wq = WorkQueue(loop=event_loop)
+    assert wq.loop == event_loop
+    WorkQueue(max_concurrent=0)
+    WorkQueue(max_concurrent=32)
+    with pytest.raises(RuntimeError):
+        WorkQueue(max_concurrent=-1)
+    with pytest.raises(RuntimeError):
+        WorkQueue(max_concurrent=2.5)
 
 
-def test_jq_cancellation():
-    logger = MyLogger('test')
-    jq = JobQueue(asyncio.get_event_loop(), logger=logger)
+def wq_max(wq):
+    q = []
 
-    # Async and sync jobs
-    acounter = adone = acancelled = counter = 0
+    while wq.tasks:
+        run_briefly(wq.loop)
 
-    def ajob_done(task):
-        assert task.done()
-        nonlocal adone, acancelled
-        adone += 1
-        if task.cancelled():
-            acancelled += 1
-        task.result()  # Collect the result
+    fut = wq.loop.create_future()
+    async def work():
+        q.append(None)
+        await fut
 
-    async def ajob():
-        nonlocal acounter
-        acounter += 1
+    for n in range(16):
+        wq.create_task(work())
+        prior_len = len(q)
+        run_briefly(wq.loop)
+        if len(q) == prior_len:
+            break
 
-    def sjob():
-        nonlocal counter
-        counter += 1
+    fut.set_result(len(q))
+    if not wq.max_concurrent:   # Ugh
+        wq.max_concurrent = 1
+    if wq.tasks:
+        wq.loop.run_until_complete(asyncio.gather(*wq.tasks, loop=wq.loop))
 
-    # Test ajob and sjob work()
-    sjob()
-    assert counter == 1
-    jq.loop.run_until_complete(ajob())
-    assert acounter == 1
-    counter = acounter = 0
+    return fut.result()
 
-    jq.add_coroutine(ajob(), ajob_done)
-    assert len(jq) == 1
-    jq.add_job(sjob)
-    assert len(jq) == 2
-    assert not acounter and not adone and not counter and not acancelled
-    jq.cancel_all()
 
-    assert len(jq) == 1  # The async job only
-    assert not acounter and not adone and not counter and not acancelled
-    assert not logger.logged_msg
-    jq.loop.run_until_complete(jq.wait_for_all())
-    jq.process_some(time.time() + 1)
-    assert not jq
-    assert not acounter and not counter
-    assert adone == 1
-    assert acancelled == 1
-    # Test the JobQueue catches and ignores the cancellation exception
-    assert not logger.logged_msg
+def test_max_concurrent():
+    wq = WorkQueue(max_concurrent=3)
+    assert wq.max_concurrent == 3
+    assert wq_max(wq) == 3
+    wq.max_concurrent = 3
+    assert wq.max_concurrent == 3
+    assert wq_max(wq) == 3
+    wq.max_concurrent = 1
+    assert wq.max_concurrent == 1
+    assert wq_max(wq) == 1
+    wq.max_concurrent = 0
+    assert wq.semaphore._value == 1
+    assert wq.max_concurrent == 0
+    assert wq_max(wq) == 0
+    wq.max_concurrent = 5
+    assert wq.max_concurrent == 5
+    assert wq_max(wq) == 5
+    with pytest.raises(RuntimeError):
+        wq.max_concurrent = -1
+    with pytest.raises(RuntimeError):
+        wq.max_concurrent = 2.6
 
-    # Add a sync and async job
-    jq.add_job(sjob)
-    assert not jq   # Ignored
-    adone = acancelled = acounter = 0
-    jq.add_coroutine(ajob(), ajob_done)
-    # Effect only happens when loop runs
-    assert not acounter and not acancelled and not adone
-    jq.loop.run_until_complete(jq.wait_for_all())
-    assert not acounter
-    assert acancelled == 1
-    assert adone == 1
 
-    # Re-cancel to no effect
-    adone = acancelled = acounter = 0
-    jq.cancel_all()
-    jq.process_some(time.time() + 1)
-    assert not acounter and not acancelled and not adone and not counter
-    assert not logger.logged_msg
+def test_cancel_all():
+    wq = WorkQueue()
+
+    fut = wq.loop.create_future()
+    async def work():
+        await fut
+
+    count = 3
+    for _ in range(count):
+        wq.create_task(work())
+    run_briefly(wq.loop)
+
+    tasks = wq.tasks
+    assert len(tasks) == count
+    wq.cancel_all()
+    run_briefly(wq.loop)
+
+    assert all(task.cancelled() for task in tasks)
+    assert not wq.tasks
 
 
 def test_timeout():
     async def timeout():
+        timed_out = False
         try:
             with Timeout(0.01, loop) as t:
-                await t.run(asyncio.sleep(0.01))
-            timed_out = False
+                await t.run(asyncio.sleep(1))
         except asyncio.TimeoutError:
             timed_out = True
         return timed_out and t.timed_out
 
     async def no_timeout():
-        try:
-            with Timeout(0.02, loop) as t:
-                await t.run(asyncio.sleep(0.01))
-            timed_out = False
-        except asyncio.TimeoutError:
-            timed_out = True
-        return not timed_out and not t.timed_out
+        with Timeout(1, loop) as t:
+            await t.run(asyncio.sleep(0.01))
+        return False
 
     loop = asyncio.get_event_loop()
     assert loop.run_until_complete(timeout()) is True
-    assert loop.run_until_complete(no_timeout()) is True
+    assert loop.run_until_complete(no_timeout()) is False

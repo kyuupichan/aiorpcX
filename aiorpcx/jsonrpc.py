@@ -186,17 +186,14 @@ class JSONRPC(RPCProtocolBase):
         return cls.batch_message_from_parts(rb(req) for req in item)
 
     @classmethod
-    def batch_message_from_parts(cls, parts):
-        '''Convert messages, one per batch item, into a batch message.
-
-        Return an empty message if there are no parts.
+    def batch_message_from_parts(cls, messages):
+        '''Convert messages, one per batch item, into a batch message.  At
+        least one message must be passed.
         '''
-        # Comma-separate the parts and wrap the lot in square
-        # brackets, except return no bytes if there are no parts.
-        middle = b', '.join(parts)
-        if middle:
-            return b''.join([b'[', middle, b']'])
-        return b''
+        # Comma-separate the messages and wrap the lot in square brackets
+        middle = b', '.join(messages)
+        assert middle
+        return b''.join([b'[', middle, b']'])
 
     @classmethod
     def encode_payload(cls, payload):

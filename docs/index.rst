@@ -50,6 +50,7 @@ Documentation
    framing
    json-rpc
    rpc
+   session
    socks
 
 Indices and tables

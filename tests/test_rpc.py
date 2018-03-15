@@ -13,6 +13,8 @@ import pytest
 from aiorpcx import *
 from aiorpcx.rpc import (RPCRequest, RPCRequestOut, RPCResponse, RPCBatch,
                          RPCBatchOut, RPCError, RPCHelperBase, RPCProcessor)
+from aiorpcx.util import WorkQueue
+from tests.test_util import run_briefly
 
 
 class LogError(Exception):
@@ -73,7 +75,11 @@ def test_RPCRequest():
         nonlocal valid
         valid = req is request
 
-    request = RPCRequestOut('method', 0, on_done)
+    # Test args good type
+    with pytest.raises(ValueError):
+        RPCRequestOut('method', 0, on_done)
+
+    request = RPCRequestOut('method', [0], on_done)
     assert not request.done()
     with pytest.raises(asyncio.InvalidStateError):
         request.result()
@@ -90,14 +96,14 @@ def test_RPCRequest():
     assert request.result() == 42
 
     # Result setting
-    request = RPCRequestOut('method', 0, on_done)
+    request = RPCRequestOut('method', None, on_done)
     loop.call_later(0.001, request.set_result, 45)
     valid = False
     assert loop.run_until_complete(request) == 45
     assert valid
     assert request.result() == 45
 
-    request = RPCRequestOut('method', 0, on_done)
+    request = RPCRequestOut('method', None, on_done)
     loop = asyncio.get_event_loop()
     request.set_result(46)
     assert loop.run_until_complete(request) == 46
@@ -176,11 +182,7 @@ def test_RPCHelperBase():
     with pytest.raises(NotImplementedError):
         helper.send_message(b'')
     with pytest.raises(NotImplementedError):
-        helper.add_coroutine(None, None)
-    with pytest.raises(NotImplementedError):
-        helper.add_job(None)
-    with pytest.raises(NotImplementedError):
-        helper.cancel_all()
+        helper.create_task(None)
     assert helper.notification_handler('n') is None
     assert helper.request_handler('n') is None
 
@@ -231,17 +233,14 @@ class MyRPCProcessor(RPCProcessor):
 
     def __init__(self, protocol=None):
         protocol = protocol or JSONRPCv2
-        loop = asyncio.get_event_loop()
+        self.loop = asyncio.get_event_loop()
         super().__init__(protocol, self, logger=self)
-        self.job_queue = JobQueue(loop)
+        self.work_queue = WorkQueue(loop=self.loop)
         self.responses = deque()
         self.debug_messages = []
         self.debug_message_count = 0
         self.error_messages = []
         self.error_message_count = 0
-        self.add_coroutine = self.job_queue.add_coroutine
-        self.add_job = self.job_queue.add_job
-        self.cancel_all = self.job_queue.cancel_all
         # Ensure our operation causes no unwanted errors
         alogger = logging.getLogger('asyncio')
         alogger.warning = self.asyncio_log
@@ -254,6 +253,9 @@ class MyRPCProcessor(RPCProcessor):
 
     def __exit__(self, exc_type, exc_value, traceback):
         assert not self.asyncio_logs
+
+    def create_task(self, coro):
+        return self.work_queue.create_task(coro)
 
     # RPCHelper methods
     def send_message(self, message):
@@ -274,28 +276,22 @@ class MyRPCProcessor(RPCProcessor):
     # RPCHelper methods -- end
 
     def process_all(self):
-        # 640 seconds is enough for anyone
-        self.job_queue.process_some(time.time() + 640)
+        tasks = self.work_queue.tasks
+        if tasks:
+            self.loop.run_until_complete(asyncio.wait(tasks))
+        else:
+            self.loop.run_until_complete(asyncio.sleep(0))
 
     def yield_to_loop(self):
-        # Let loop schedule callbacks
-        loop = self.job_queue.loop
-        loop.run_until_complete(asyncio.sleep(0))
+        run_briefly(self.loop)
 
     def expect_asyncio_log(self, text):
         return ExpectAsyncioLog(self, text)
 
-    def wait(self):
-        queue = self.job_queue
-        queue.loop.run_until_complete(queue.wait_for_all())
-        assert not queue.tasks
-
     def consume_one_response(self):
-        while self.responses:
-            response = self.responses.popleft()
-            if response:
-                return response
-        return b''
+        if not self.responses:
+            self.yield_to_loop()
+        return self.responses.popleft()
 
     def consume_responses(self):
         result = [response for response in self.responses if response]
@@ -303,10 +299,7 @@ class MyRPCProcessor(RPCProcessor):
         return result
 
     def all_done(self):
-        return len(self.job_queue) == 0 and not self.responses
-
-    def all_sync_done(self):
-        return len(self.job_queue.jobs) == 0 and not self.responses
+        return not self.work_queue.tasks and not self.responses
 
     def expect_error(self, code, text, request_id):
         message = self.consume_one_response()
@@ -347,9 +340,8 @@ class MyRPCProcessor(RPCProcessor):
         assert message == self.protocol.response_message(response)
 
     def expect_nothing(self):
-        self.process_all()
-        message = self.consume_one_response()
-        assert message == b''
+        with pytest.raises(IndexError):
+            self.consume_one_response()
 
     def add_batch(self, batch):
         self.message_received(self.protocol.batch_message(batch))
@@ -402,6 +394,9 @@ class MyRPCProcessor(RPCProcessor):
 
     async def on_raise_async(self):
         return anything
+
+    async def on_sleep(self):
+        await asyncio.sleep(1)
 
     def on_add(self, x, y=4, z=2):
         values = (x, y, z)
@@ -493,10 +488,6 @@ def test_good_args():
         rpc.expect_response(7, 0)
         rpc.expect_response(5, 0)
         rpc.expect_response(6, 0)
-        assert rpc.all_sync_done()
-        assert not rpc.all_done()
-
-        rpc.wait()
 
         # Order may not be reliable here...
         rpc.expect_response(7, 0)
@@ -520,16 +511,13 @@ def test_named_args_good():
             RPCRequest('add_async', {"x": 1, "z": 8}, 0),
             RPCRequest('add_async', {"x": 1}, None),
         ])
+        rpc.yield_to_loop()
         assert rpc.recv_count == 10
 
         rpc.expect_response(7, 0)
         rpc.expect_response(5, 0)
         rpc.expect_response(6, 0)
         rpc.expect_response(13, 0)
-        assert rpc.all_sync_done()
-        assert not rpc.all_done()
-
-        rpc.wait()
 
         # Order may not be reliable here...
         rpc.expect_response(7, 0)
@@ -590,7 +578,6 @@ def test_partial_async():
             RPCRequest('partial_add_async', [10, 15], 3),
         ])
 
-        rpc.wait()
         rpc.expect_response(125, 3)
         assert rpc.all_done()
 
@@ -607,6 +594,7 @@ def test_erroneous_request():
         rpc.expect_error(rpc.protocol.PARSE_ERROR, 'JSON', None)
         rpc.expect_error(rpc.protocol.METHOD_NOT_FOUND, 'string', 1)
         assert rpc.all_done()
+        assert rpc.errors == 3
 
 
 def test_request_round_trip():
@@ -710,7 +698,6 @@ def test_request_round_trip():
 
         # Now process the queue and the async jobs, generating queued responses
         rpc.process_all()
-        rpc.wait()
 
         # Get the queued responses and send them back to ourselves
         responses = rpc.consume_responses()
@@ -821,15 +808,12 @@ def test_batch_round_trip():
         # requests, and creates jobs to process the valid requests
         rpc.message_received(batch_message)
         assert not rpc.all_done()
-        assert rpc.debug_message_count == 2  # Both notification and request
-        assert not rpc.error_messages
-        rpc.debug_clear()
 
         # Now process the request jobs, generating queued response messages
         rpc.process_all()
-        rpc.wait()
-        assert not rpc.debug_messages
+        assert rpc.debug_message_count == 2  # Both notification and request
         assert not rpc.error_messages
+        rpc.debug_clear()
 
         # Get the batch response and send it back to ourselves
         response, = rpc.consume_responses()
@@ -853,18 +837,16 @@ def test_some_invalid_requests():
         # non-string method.
         batch_message = (
             b'[{"jsonrpc": "2.0", "method": "add", "params": [1]}, '
-            b'{"method": 2}]'
+            b'{"jsonrpc": "2.0", "method": 2}]'
         )
         rpc.message_received(batch_message)
-        assert rpc.recv_count == 2
 
         # Now process the request jobs, generating queued response messages
         rpc.process_all()
+        assert rpc.recv_count == 2
 
-        # Test a single non-empty response was created
+        # Test a single non-empty response was created for the invalid method
         response, = rpc.consume_responses()
-
-        # There is no response!
         assert rpc.all_done()
 
 
@@ -1103,20 +1085,12 @@ def test_outgoing_batch_request_cancellation_and_setting():
 def test_incoming_request_cancellation():
     '''Tests cancelling async requests.'''
     with MyRPCProcessor() as rpc:
-        # Simple request.  Note that awaiting on the tasks in the close()
-        # method has a different effect to calling
-        # loop.run_until_complete.  The latter will always cancel the
-        # tasks before they get a chance to run.  The former lets them run
-        # before the cancellation is effected, probably because the event
-        # loop doesn't get a look-in.  So make the task one that gives
-        # control to the event loop directly
-        rpc.add_request(RPCRequest('add_async', [1], 0))
-        rpc.cancel_all()
-        rpc.wait()
-
-        # Consume the empty response caused by cancellation but do not return
-        # it.
-        assert not rpc.consume_responses()
+        # Simple request.
+        rpc.add_request(RPCRequest('sleep', None, 0))
+        rpc.yield_to_loop()
+        rpc.work_queue.cancel_all()
+        rpc.yield_to_loop()
+        assert not rpc.responses
         assert rpc.all_done()
 
 
@@ -1126,25 +1100,14 @@ def test_incoming_batch_request_cancellation():
     with MyRPCProcessor() as rpc:
         rpc.add_batch(RPCBatch([
             RPCRequest('add_async', [1], 0),
-            RPCRequest('add', [50], 2),
+            RPCRequest('sleep', None, 1),
         ]))
 
-        # Do the sync jobs
-        assert rpc.job_queue.jobs
-        rpc.process_all()
-        # The sync response is collected by the batch aggregator
+        rpc.yield_to_loop()
+        assert len(rpc.work_queue.tasks) == 1
+        rpc.work_queue.cancel_all()
+        rpc.yield_to_loop()
         assert not rpc.responses
-        assert not rpc.job_queue.jobs
-        rpc.cancel_all()
-        rpc.wait()
-
-        # This tests that the batch is sent and not still waiting.
-        # The single response is that of the batch.  It might contain
-        # synchronous jobs.  Should we improve this?
-        response, = rpc.consume_responses()
-        batch = rpc.protocol.message_to_item(response)
-        # The sleep should not have completed and been swallowed
-        assert len(batch) == 1
         assert rpc.all_done()
 
 
@@ -1304,7 +1267,7 @@ def test_buggy_request_handler_is_logged():
         rpc.add_request(RPCRequest('raise_async', [], 0))
         rpc.error_messages.clear()
         rpc.error_message_count = 0
-        rpc.wait()
+        rpc.process_all()
         rpc.expect_internal_error("anything", 0)
         assert rpc.error_message_count == 1
         assert rpc.all_done()
@@ -1312,65 +1275,19 @@ def test_buggy_request_handler_is_logged():
         rpc.add_request(RPCRequest('raise_async', [], None))
         rpc.error_messages.clear()
         rpc.error_message_count = 0
-        rpc.wait()
+        rpc.process_all()
         assert not rpc.responses
         assert rpc.error_message_count == 1
         rpc.expect_error_message("anything")
         assert rpc.all_done()
 
 
-def test_close():
-    loop = asyncio.get_event_loop()
-    called = 0
-
-    def on_done(req):
-        nonlocal called
-        called += 1
-
-    # Test close cancels an outgoing request
-    with MyRPCProcessor() as rpc:
-        request = RPCRequestOut('add', [1], on_done)
-        rpc.send_request(request)
-        loop.run_until_complete(rpc.close())
-        assert called == 1
-        assert request.cancelled()
-
-    # Test close cancels an outgoing batch and its requets
-    with MyRPCProcessor() as rpc:
-        called = 0
-        batch = RPCBatchOut()
-        batch.add_request('add_async', [2], on_done)
-        batch.add_request('add_async', [3], on_done)
-        rpc.send_batch(batch, on_done)
-        loop.run_until_complete(rpc.close())
-        assert called == 3
-        assert batch.cancelled()
-        assert all(request.cancelled() for request in batch)
-
-    # Test close cancels sync jobs scheduled for an incoming request
-    # This needs to be done inside an async function as otherwise the
-    # loop will have had a chance to schedule the task...
-    async def add_request_and_cancel(rpc):
-        rpc.add_request(RPCRequest('add', [1], 0))
-        await rpc.close()
-        rpc.process_all()
-        assert not rpc.responses
-
-    with MyRPCProcessor() as rpc:
-        loop.run_until_complete(add_request_and_cancel(rpc))
-
-    # Test close reads request values
-    with MyRPCProcessor() as rpc:
-        request = RPCRequestOut('add', [4], None)
-        rpc.send_request(request)
-        request.set_result(5)
-        loop.run_until_complete(rpc.close())
-
 def test_protocol_autodetection_v1():
     with MyRPCProcessor() as rpc:
         rpc.protocol = JSONRPCAutoDetect
         rpc.message_received(b'{"error": "foo", "result": null, "id": 0}')
         assert rpc.protocol == JSONRPCv1
+
 
 def test_protocol_autodetection_v2():
     with MyRPCProcessor() as rpc:

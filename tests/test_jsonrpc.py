@@ -482,7 +482,8 @@ def test_batch_response_bad():
 
 def test_batch_message_from_parts():
     for rpc in rpcs:
-        assert rpc.batch_message_from_parts([]) == b''
+        with pytest.raises(AssertionError):
+            rpc.batch_message_from_parts([])
         assert rpc.batch_message_from_parts([b'1']) == b'[1]'
         assert rpc.batch_message_from_parts([b'1', b'2']) == b'[1, 2]'
         # An empty part is not valid, but anyway.

@@ -23,13 +23,12 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-__all__ = ('JobQueue', )
+__all__ = ()
 
 import asyncio
-from collections import deque, namedtuple
+from collections import namedtuple
 from functools import partial
 import inspect
-import logging
 
 
 def is_async_call(func):
@@ -77,75 +76,62 @@ def signature_info(func):
     return SignatureInfo(min_args, max_args, required_names, other_names)
 
 
-class JobQueue(object):
-    '''A JobQueue for use with a loop framework such as asyncio.'''
+class WorkQueue(object):
 
-    def __init__(self, loop, *, logger=None):
+    def __init__(self, *, loop=None, max_concurrent=16):
+        self._require_non_negative(max_concurrent)
+        if loop is None:
+            loop = asyncio.get_event_loop()
         self.loop = loop
-        self.logger = logger or logging.getLogger(self.__class__.__name__)
+        self._max_concurrent = max_concurrent
         self.tasks = set()
-        self.jobs = deque()
-        self.cancelled = False
+        self.semaphore = asyncio.Semaphore(max_concurrent, loop=loop)
 
-    def _on_task_done(self, on_done, task):
-        self.tasks.remove(task)
-        try:
-            if on_done:
-                on_done(task)
-            else:
-                task.result()
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            self.logger.exception('exception raised processing task result')
+    def _require_non_negative(self, value):
+        if not isinstance(value, int) or value < 0:
+            raise RuntimeError('max_concurrent must be a natural number')
 
-    def add_coroutine(self, coro, on_done):
-        task = self.loop.create_task(coro)
-        task.add_done_callback(partial(self._on_task_done, on_done))
-        self.tasks.add(task)
-        if self.cancelled:
-            task.cancel()
+    async def _acquire_count(self, count):
+        for _ in range(count):
+            await self.semaphore.acquire()
 
-    def add_job(self, job):
-        if not self.cancelled:
-            self.jobs.append(job)
+    async def _acquire_and_run(self, coro):
+        '''Run coro after acquiriing the semaphore.'''
+        async with self.semaphore:
+            return await coro
 
-    def process_some(self, until):
-        '''Process synchronous jobs until the given time is reached.
+    # Public API
+    @property
+    def max_concurrent(self):
+        return self._max_concurrent
 
-        Returns when the first job completes on or after until.'''
-        while self.jobs and time.time() < until:
-            job = self.jobs.popleft()
-            try:
-                job()
-            except Exception:
-                self.logger.exception('exception raised processing job')
-
-    def __len__(self):
-        return len(self.tasks) + len(self.jobs)
+    @max_concurrent.setter
+    def max_concurrent(self, value):
+        self._require_non_negative(value)
+        diff = value - self._max_concurrent
+        self._max_concurrent = value
+        if diff >= 0:
+            for _ in range(diff):
+                self.semaphore.release()
+        else:
+            task = self.loop.create_task(self._acquire_count(-diff))
+            task.add_done_callback(self.tasks.remove)
+            self.tasks.add(task)
 
     def cancel_all(self):
-        '''Drop all uncompleted synchronous jobs.  Cancel all async tasks -
-        this will fail if the task has already been scheduled for execution
-        or is running in the event loop.
-
-        Once cancel_all() is called, adding a syncronous job will be ignored,
-        adding an asynchronous job will cause it to be immediately cancelled.
-
-        If called more than once, subsequent calls have no effect.
-        '''
-        if self.cancelled:
-            return
-        self.cancelled = True
-        self.jobs.clear()
+        '''Cancel all uncompleted tasks.'''
         for task in self.tasks:
             task.cancel()
 
-    async def wait_for_all(self):
-        '''Waits for all tasks to complete.'''
-        # For some reason wait requires non-empty set...
-        if self.tasks:
-            await asyncio.wait(self.tasks)
+    def create_task(self, coro):
+        '''Add a task to the run queue.
+
+        coro - a coroutine object
+        '''
+        task = self.loop.create_task(self._acquire_and_run(coro))
+        task.add_done_callback(self.tasks.remove)
+        self.tasks.add(task)
+        return task
 
 
 class Timeout(object):

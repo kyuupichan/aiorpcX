@@ -66,6 +66,7 @@ specified and be one of the following.
 
   An abstract class representing the ``SOCKS5`` protocol.
 
+
 Proxy
 -----
 

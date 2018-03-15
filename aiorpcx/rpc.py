@@ -27,12 +27,10 @@
 
 __all__ = ('RPCError', 'RPCProtocolBase')
 
-from asyncio import Future, CancelledError, sleep
-from collections import deque
+from asyncio import Future, CancelledError
 from functools import partial
 import itertools
 import logging
-import traceback
 
 from .util import is_async_call, signature_info
 
@@ -49,6 +47,8 @@ class RPCRequest(object):
         if args is None:
             self.args = []
         else:
+            if not isinstance(args, (list, dict)):
+                raise ValueError('request args must be a list or dictionary')
             self.args = args
         self.request_id = request_id
         # Ill-formed requests for which the protocol couldn't
@@ -213,10 +213,14 @@ class RPCBatchOut(RPCBatch, Future):
         self._cancel_requests()
 
     def add_request(self, method, args=None, on_done=None):
-        self.items.append(RPCRequestOut(method, args, on_done))
+        request = RPCRequestOut(method, args, on_done)
+        self.items.append(request)
+        return request
 
     def add_notification(self, method, args=None):
-        self.items.append(RPCRequest(method, args, None))
+        request = RPCRequest(method, args, None)
+        self.items.append(request)
+        return request
 
 
 class RPCHelperBase(object):
@@ -225,26 +229,16 @@ class RPCHelperBase(object):
 
     def send_message(self, message):
         '''Called when there is a message to send over the network.  The
-        message is unframed.  It might be empty, in which case it
-        should be ignored.
+        message is unframed.  If a request was cancelled, send_message
+        is called with an empty message, which should be ignored.
 
         The derived class may want to queue several messages and send
         them as a batch, or delay / throttle the sends in some way.
         '''
         raise NotImplementedError
 
-    def add_coroutine(self, coro, on_done):
-        '''Schedule a coroutine as an asyncio task.
-
-        If on_done is not None, call on_done(task).'''
-        raise NotImplementedError
-
-    def add_job(self, job):
-        '''Schedule a synchronous function call.'''
-        raise NotImplementedError
-
-    def cancel_all(self):
-        '''Cancel all uncompleted scheduled tasks and jobs.'''
+    def create_task(self, coro):
+        '''Create a task to run the given coroutine.  Return the task.'''
         raise NotImplementedError
 
     def notification_handler(self, method):
@@ -286,10 +280,9 @@ class RPCProtocolBase(object):
         raise NotImplementedError
 
     @classmethod
-    def batch_message_from_parts(cls, parts):
-        '''Convert messages, one per batch item, into a batch message.
-
-        Return an empty message if there are no parts.
+    def batch_message_from_parts(cls, messages):
+        '''Convert messages, one per batch item, into a batch message.  At
+        least one message must be passed.
         '''
         raise NotImplementedError
 
@@ -342,42 +335,42 @@ class RPCProcessor(object):
         # RPCError raised processing requests.
         self.internal_errors = 0
 
-    def _evaluate(self, request, func):
-        '''Evaluate func in the context of processing a request.
+    def _response_message(self, request, task):
+        '''Return a response message to a request, or None if no message
+        should be sent.  Log errors.
 
-        If the call returns a result, return it.
-        If the call raises a CancelledError, return the error.
-        If the call raises an RPC error, log debug it and return the error
-        with its request_id set to match that of the request.
-        If the call raises any other exception, it indicates a bug in
-        the software.  Log the exception, and return an RPCError indicating
-        an internal error.
-        '''
+        Notifications return a response only if ill-formed.'''
+        request_id = request.request_id
         try:
-            return func()
+            result = task.result()
+            if request_id is None:
+                return None
+            response = RPCResponse(result, request_id)
+            return self.protocol.response_message(response)
         except CancelledError as error:
-            return error
+            return None
         except RPCError as error:
             self.errors += 1
-            error.request_id = request.request_id
+            error.request_id = request_id
             self.logger.debug('error processing request: %s %s',
                               repr(error), repr(request))
-            return error
+            # Ill-formed notifications require a response
+            if request_id is None and not isinstance(request.method, RPCError):
+                return None
+            return self.protocol.error_message(error)
         except Exception:
             self.internal_errors += 1
             self.logger.exception('exception raised processing request: %s',
                                   repr(request))
-            return self.protocol.internal_error(request.request_id)
+            if request_id is None:
+                return None
+            error = self.protocol.internal_error(request_id)
+            return self.protocol.error_message(error)
 
-    def _result_to_message(self, result, request_id):
-        '''Convert an RPC call result from _evalute to a message.'''
-        if isinstance(result, RPCError):
-            return self.protocol.error_message(result)
-        elif isinstance(result, CancelledError):
-            return b''
-        else:
-            response = RPCResponse(result, request_id)
-            return self.protocol.response_message(response)
+    def _send_response(self, request, task):
+        response = self._response_message(request, task)
+        if response:
+            self.helper.send_message(response)
 
     def _rpc_call(self, request):
         '''Return a partial function call that calls the RPC function
@@ -440,60 +433,46 @@ class RPCProcessor(object):
                                                f'take parameter{s} {excess}')
         return partial(handler, **args)
 
-    def _process_request(self, request, send_func):
-        '''Process a request or notification.
+    async def _process_request(self, request):
+        '''Process a request or notification and return its result.
 
-        If it is not a notification, send_func will be called with
-        the response bytes, either now or later.
-        '''
+        Raises RPCError to ill-formed or erroneous requests.'''
         self.recv_count += 1
-
-        # Wrap the call to _rpc_call in _evaluate in order to
-        # correctly handle exceptions it might raise.
-        rpc_call = self._evaluate(request, partial(self._rpc_call, request))
-        request_id = request.request_id
-
-        if isinstance(rpc_call, RPCError):
-            # Always send responses to ill-formed notifications
-            if request_id is not None or isinstance(request.method, RPCError):
-                send_func(self.protocol.error_message(rpc_call))
-            return
-
-        # Handling depends on whether the handler is async or not.
-        # Notifications just evaluate the RPC call; requests send the result.
-        def evaluate_send(func):
-            result = self._evaluate(request, func)
-            if request_id is not None:
-                send_func(self._result_to_message(result, request_id))
-
-        def on_async_done(task):
-            evaluate_send(task.result)
-
+        rpc_call = self._rpc_call(request)
         if is_async_call(rpc_call):
-            self.helper.add_coroutine(rpc_call(), on_async_done)
+            return await rpc_call()
         else:
-            self.helper.add_job(partial(evaluate_send, rpc_call))
+            return rpc_call()
 
     def _process_request_batch(self, batch):
-        '''For request batches, queue each request individually except
-        that the results must be collected and not sent.  The response
-        is only sent when all the individual responses have come in.
+        '''Process a request batch.  Create a task for each sub-request, and
+        collect the results.  Send a response, if not empty, once all
+        results have come in.
         '''
-        def on_done(response):
+        def collect_response(request, task):
+            nonlocal cancelled
+            # Collect the response even if we don't use it to avoid
+            # diagnostics about uncomsumed exceptions
+            response = self._response_message(request, task)
             if response:
                 parts.append(response)
-            nonlocal remaining
-            remaining -= 1
-            if not remaining:
+            tasks.remove(task)
+            # If any task was cancelled cancel the others
+            if task.cancelled() and not cancelled:
+                cancelled = True
+                for task in tasks:
+                    task.cancel()
+            if not tasks and parts and not cancelled:
                 message = self.protocol.batch_message_from_parts(parts)
                 self.helper.send_message(message)
 
         parts = []
-        remaining = len([item for item in batch
-                         if item.request_id is not None or
-                         isinstance(item.method, RPCError)])
+        cancelled = False
+        tasks = set()
         for request in batch:
-            self._process_request(request, on_done)
+            task = self.helper.create_task(self._process_request(request))
+            task.add_done_callback(partial(collect_response, request))
+            tasks.add(task)
 
     def _handle_request_response(self, request, response):
         if isinstance(response.result, RPCError):
@@ -543,7 +522,8 @@ class RPCProcessor(object):
         '''
         item = self.protocol.message_to_item(message)
         if isinstance(item, RPCRequest):
-            self._process_request(item, self.helper.send_message)
+            task = self.helper.create_task(self._process_request(item))
+            task.add_done_callback(partial(self._send_response, item))
         elif isinstance(item, RPCResponse):
             self._process_response(item)
         elif isinstance(item, RPCBatch):
@@ -614,18 +594,3 @@ class RPCProcessor(object):
         individual requests it is comprised of.
         '''
         return list(self.requests.values())
-
-    async def close(self):
-        '''Cancel all scheduled tasks and jobs: those for responses to
-        incoming requests, and those waiting for responses to outgoing
-        requests.
-
-        Yields to the event loop so that cancellations and callbacks
-        can be processed before returning.
-        '''
-        self.helper.cancel_all()
-        for request in self.all_requests():
-            # cancel() is a no-op if the future is done
-            request.cancel()
-        await sleep(0)
-        assert not self.requests
