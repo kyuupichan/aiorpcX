@@ -56,7 +56,7 @@ class FakeServer(asyncio.Protocol):
         self.buff += data
         try:
             self.consume_func()
-        except:
+        except Exception:
             traceback.print_exc()
 
     def close(self, data=None):
@@ -169,7 +169,6 @@ class FakeServer(asyncio.Protocol):
         else:
             self.split_write(auth_response, split)
         self.consume_func = partial(self.SOCKS5_req, req_response, split)
-
 
     def SOCKS5_req(self, req_response, split):
         if len(self.buff) < 4:
@@ -304,10 +303,12 @@ def with_timeout(timeout, loop, coro):
     with Timeout(0.05, loop) as t:
         return loop.run_until_complete(t.run(coro))
 
+
 async def connecta(protocol, lss, consume_func, auth, addr, received=None):
     lss.server.consume_func = consume_func
     await protocol.handshake(lss.socket, *addr, auth, loop=lss.loop)
     assert lss.server.received == received
+
 
 def connect(protocol, lss, consume_func, auth, addr, received=None):
     coro = connecta(protocol, lss, consume_func, auth, addr, received)
@@ -478,28 +479,28 @@ class TestSOCKS5(object):
         auth = SOCKSUserAuth(username='', password='password')
         with pytest.raises(SOCKSFailure) as err:
             connect(SOCKS5, lss5, partial(lss5.server.SOCKS5, chosen_auth=2),
-                         auth, addr5)
+                    auth, addr5)
         assert 'invalid username' in str(err.value)
 
     def test_long_username(self, lss5, addr5):
         auth = SOCKSUserAuth(username='a' * 256, password='password')
         with pytest.raises(SOCKSFailure) as err:
             connect(SOCKS5, lss5, partial(lss5.server.SOCKS5, chosen_auth=2),
-                         auth, addr5)
+                    auth, addr5)
         assert 'invalid username' in str(err.value)
 
     def test_short_password(self, lss5, addr5):
         auth = SOCKSUserAuth(username='username', password='')
         with pytest.raises(SOCKSFailure) as err:
             connect(SOCKS5, lss5, partial(lss5.server.SOCKS5, chosen_auth=2),
-                         auth, addr5)
+                    auth, addr5)
         assert 'invalid password' in str(err.value)
 
     def test_long_password(self, lss5, addr5):
         auth = SOCKSUserAuth(username='username', password='p' * 256)
         with pytest.raises(SOCKSFailure) as err:
             connect(SOCKS5, lss5, partial(lss5.server.SOCKS5, chosen_auth=2),
-                         auth, addr5)
+                    auth, addr5)
         assert 'invalid password' in str(err.value)
 
     def test_reject_auth(self, lss5, addr5):
@@ -682,7 +683,7 @@ class TestSOCKSProxy(object):
 
     # def test_good_SOCKS4(self, SOCKS4_address, auth):
     #     loop = asyncio.get_event_loop()
-    #     coro = SOCKSProxy.auto_detect_address(SOCKS4_address, auth, loop=None)
+    #    coro = SOCKSProxy.auto_detect_address(SOCKS4_address, auth, loop=None)
     #     loop = asyncio.get_event_loop()
     #     result = loop.run_until_complete(coro)
     #     assert isinstance(result, SOCKSProxy)
