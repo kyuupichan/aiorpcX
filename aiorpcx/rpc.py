@@ -30,6 +30,7 @@ __all__ = ('RPCError', 'RPCProtocolBase')
 from asyncio import Future, CancelledError, sleep
 from collections import deque
 from functools import partial
+import itertools
 import logging
 import traceback
 
@@ -74,20 +75,14 @@ class RPCRequestOut(RPCRequest, Future):
     call on completion.
     '''
 
-    _next_id = 0
-
-    @classmethod
-    def next_id(cls):
-        result = cls._next_id
-        cls._next_id += 1
-        return result
+    id_counter = itertools.count()
 
     def __init__(self, method, args, on_done, *, loop=None):
         '''Initialize a request using the next unique request ID.
 
         on_done - can be None
         '''
-        RPCRequest.__init__(self, method, args, self.next_id())
+        RPCRequest.__init__(self, method, args, next(self.id_counter))
         Future.__init__(self, loop=loop)
         if on_done:
             self.add_done_callback(on_done)

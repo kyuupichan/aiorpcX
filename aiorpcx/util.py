@@ -30,8 +30,6 @@ from collections import deque, namedtuple
 from functools import partial
 import inspect
 import logging
-import time
-import traceback
 
 
 def is_async_call(func):
