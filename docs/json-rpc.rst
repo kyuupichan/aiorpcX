@@ -33,6 +33,13 @@ implementing JSON RPC versions 1.0 and 2.0 in a strict way.
   acceptable to strict implementations of both versions 1.0 and 2.0,
   so it sends version 2.0 messages.
 
+.. class:: JSONRPCAutoDetect
+
+  Auto-detects the JSON RPC protocol version spoken by the remote side
+  based on the first incoming message, from :class:`JSONRPCv1`,
+  :class:`JSONRPCv2` and :class:`JSONRPCLoose`.  The RPC processor
+  will then switch to that protocol version.
+
 
 Message interpretation
 ----------------------
@@ -50,21 +57,6 @@ Message interpretation
   If the message is ill-formed, return an :class:`RPCRequest` object
   with its :attr:`method` set to an :class:`RPCError` instance
   describing the error.
-
-.. classmethod:: JSONRPC.detect_protocol(message)
-
-  Attempt to detect the protocol version a JSON RPC message most
-  closely conforms to.
-
-  :param bytes message: the message to interpret
-  :return: the protocol class, or :const:`None`
-  :rtype: :class:`JSONRPC`
-
-  If the message does not conform to either JSON RPC version 1.0 or
-  version 2.0 :class:`JSONRPCLoose` or :const:`None` will be returned.
-  Note that, e.g., a return value of :class:`JSONRPCv2` does *not*
-  guarantee that the message is a valid JSON RPC version 2.0 message,
-  only that it is closer to that protocol version than any other.
 
 
 Message construction
