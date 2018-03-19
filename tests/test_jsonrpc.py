@@ -627,13 +627,13 @@ def test_bad_implemntation():
 
 def test_protocol_detection():
     bad_syntax_tests = [
-        (b'', None),
-        (b'\xf5', None),
-        (b'{"method":', None),
+        (b'', JSONRPCLoose),
+        (b'\xf5', JSONRPCLoose),
+        (b'{"method":', JSONRPCLoose),
     ]
     tests = [
-        (b'[]', None),
-        (b'""', None),
+        (b'[]', JSONRPCLoose),
+        (b'""', JSONRPCLoose),
         (b'{"jsonrpc": "2.0"}', JSONRPCv2),
         (b'{"jsonrpc": "1.0"}', JSONRPCv1),
         # No ID
@@ -641,18 +641,18 @@ def test_protocol_detection():
         (b'{"error": 2}', JSONRPCLoose),
         (b'{"result": 3}', JSONRPCLoose),
         # Just ID
-        (b'{"id": 2}', None),
+        (b'{"id": 2}', JSONRPCLoose),
         # Result or error alone
         (b'{"result": 3, "id":2}', JSONRPCLoose),
         (b'{"error": 3, "id":2}', JSONRPCLoose),
         (b'{"result": 3, "error": null, "id":2}', JSONRPCv1),
         # Method with or without params
         (b'{"method": "foo", "id": 1}', JSONRPCLoose),
-        (b'{"method": "foo", "params": [], "id":2}', None),
+        (b'{"method": "foo", "params": [], "id":2}', JSONRPCLoose),
     ]
 
     for message, answer in chain(bad_syntax_tests, tests):
-        result = JSONRPC.detect_protocol(message)
+        result = JSONRPCAutoDetect.detect_protocol(message)
         assert answer == result
 
     test_by_answer = {}
@@ -664,7 +664,7 @@ def test_protocol_detection():
     for length in range(1, len(test_by_answer)):
         for combo in combinations(test_by_answer, length):
             batch = batch_message(test_by_answer[answer] for answer in combo)
-            protocol = JSONRPC.detect_protocol(batch)
+            protocol = JSONRPCAutoDetect.detect_protocol(batch)
             if JSONRPCv2 in combo:
                 assert protocol == JSONRPCv2
             elif JSONRPCv1 in combo:

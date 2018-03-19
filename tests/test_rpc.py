@@ -209,6 +209,21 @@ def test_RPCBatchOut():
         rpc.send_batch(batch)
         assert request_ids in rpc.requests
 
+
+def test_RPCProtocolBase():
+    x = RPCProtocolBase()
+    with pytest.raises(NotImplementedError):
+        x.request_message(None)
+    with pytest.raises(NotImplementedError):
+        x.response_message(None)
+    with pytest.raises(NotImplementedError):
+        x.batch_message(None)
+    with pytest.raises(NotImplementedError):
+        x.batch_message_from_parts(None)
+    with pytest.raises(NotImplementedError):
+        x.error_message(None)
+
+
 # RPC processor tests
 
 
@@ -1350,3 +1365,15 @@ def test_close():
         rpc.send_request(request)
         request.set_result(5)
         loop.run_until_complete(rpc.close())
+
+def test_protocol_autodetection_v1():
+    with MyRPCProcessor() as rpc:
+        rpc.protocol = JSONRPCAutoDetect
+        rpc.message_received(b'{"error": "foo", "result": null, "id": 0}')
+        assert rpc.protocol == JSONRPCv1
+
+def test_protocol_autodetection_v2():
+    with MyRPCProcessor() as rpc:
+        rpc.protocol = JSONRPCAutoDetect
+        rpc.message_received(b'{"jsonrpc": "2.0", "method": "m", "id" :0}')
+        assert rpc.protocol == JSONRPCv2

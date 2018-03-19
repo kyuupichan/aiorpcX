@@ -25,7 +25,7 @@
 
 '''RPC message processing, independent of transport and RPC protocol.'''
 
-__all__ = ()
+__all__ = ('RPCError', 'RPCProtocolBase')
 
 from asyncio import Future, CancelledError, sleep
 from collections import deque
@@ -268,6 +268,58 @@ class RPCHelperBase(object):
         return None
 
 
+class RPCProtocolBase(object):
+
+    @classmethod
+    def request_message(cls, item):
+        '''Convert an RPCRequest item to a message.'''
+        raise NotImplementedError
+
+    @classmethod
+    def response_message(cls, item):
+        '''Convert an RPCResponse item to a message.'''
+        raise NotImplementedError
+
+    @classmethod
+    def error_message(cls, item):
+        '''Convert an RPCError item to a message.'''
+        raise NotImplementedError
+
+    @classmethod
+    def batch_message(cls, item):
+        '''Convert an RPCBatch item (a request batch) to a message.'''
+        raise NotImplementedError
+
+    @classmethod
+    def batch_message_from_parts(cls, parts):
+        '''Convert messages, one per batch item, into a batch message.
+
+        Return an empty message if there are no parts.
+        '''
+        raise NotImplementedError
+
+    @classmethod
+    def internal_error(cls, request_id):
+        '''Return an internal error RPCError object.'''
+        return RPCError(cls.INTERNAL_ERROR,
+                        'internal error processing request', request_id)
+
+    @classmethod
+    def args_error(cls, message):
+        '''Return an invalid args RPCError object.'''
+        return RPCError(cls.INVALID_ARGS, message, None)
+
+    @classmethod
+    def invalid_request(cls, message):
+        '''Return an invalid request RPCError object.'''
+        return RPCError(cls.INVALID_REQUEST, message, None)
+
+    @classmethod
+    def method_not_found(cls, message):
+        '''Return a method-not-found RPCError object.'''
+        return RPCError(cls.METHOD_NOT_FOUND, message, None)
+
+
 class RPCProcessor(object):
     '''Handles RPC message processing.
 
@@ -499,12 +551,16 @@ class RPCProcessor(object):
             self._process_request(item, self.helper.send_message)
         elif isinstance(item, RPCResponse):
             self._process_response(item)
-        else:
-            assert isinstance(item, RPCBatch)
+        elif isinstance(item, RPCBatch):
             if item.is_request_batch():
                 self._process_request_batch(item)
             else:
                 self._process_response_batch(item)
+        else:
+            # Protocol auto-detection
+            assert isinstance(item(), RPCProtocolBase)
+            self.protocol = item
+            self.message_received(message)
 
     def send_request(self, request):
         '''Send a request.

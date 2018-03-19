@@ -25,17 +25,18 @@
 
 '''Classes for JSONRPC versions 1.0 and 2.0, and a loose interpretation.'''
 
-__all__ = ('JSONRPC', 'JSONRPCv1', 'JSONRPCv2', 'JSONRPCLoose')
+__all__ = ('JSONRPC', 'JSONRPCv1', 'JSONRPCv2', 'JSONRPCLoose',
+           'JSONRPCAutoDetect')
 
 import json
 import logging
 import numbers
 import traceback
 
-from .rpc import RPCError, RPCBatch, RPCRequest, RPCResponse
+from .rpc import RPCError, RPCBatch, RPCRequest, RPCResponse, RPCProtocolBase
 
 
-class JSONRPC(object):
+class JSONRPC(RPCProtocolBase):
     '''Abstract base class that interprets and constructs JSON RPC messages.'''
 
     # Error codes.  See http://www.jsonrpc.org/specification
@@ -198,27 +199,6 @@ class JSONRPC(object):
         return b''
 
     @classmethod
-    def internal_error(cls, request_id):
-        '''Return an internal error RPCError object.'''
-        return RPCError(cls.INTERNAL_ERROR,
-                        'internal error processing request', request_id)
-
-    @classmethod
-    def args_error(cls, message):
-        '''Return an invalid args RPCError object.'''
-        return RPCError(cls.INVALID_ARGS, message, None)
-
-    @classmethod
-    def invalid_request(cls, message):
-        '''Return an invalid request RPCError object.'''
-        return RPCError(cls.INVALID_REQUEST, message, None)
-
-    @classmethod
-    def method_not_found(cls, message):
-        '''Return a method-not-found RPCError object.'''
-        return RPCError(cls.METHOD_NOT_FOUND, message, None)
-
-    @classmethod
     def encode_payload(cls, payload):
         '''Encode a Python object as JSON and convert it to bytes.'''
         try:
@@ -230,51 +210,6 @@ class JSONRPC(object):
             else:
                 request_id = None
             return cls.error_message(cls.internal_error(request_id))
-
-    @classmethod
-    def detect_protocol(cls, message):
-        '''Attempt to detect the protocol from the message.
-
-        If unsure return None.
-        '''
-        main = cls._message_to_payload(message)
-
-        def protocol_for_payload(payload):
-            if not isinstance(payload, dict):
-                return None
-            # Obey an explicit "jsonrpc"
-            version = payload.get('jsonrpc')
-            if version == '2.0':
-                return JSONRPCv2
-            if version == '1.0':
-                return JSONRPCv1
-
-            # Now to decide between JSONRPCLoose and JSONRPCv1 if possible
-            if 'id' not in payload:
-                return JSONRPCLoose
-            if 'result' in payload:
-                return JSONRPCv1 if 'error' in payload else JSONRPCLoose
-            if 'error' in payload:
-                return JSONRPCLoose
-            if 'method' in payload and 'params' not in payload:
-                return JSONRPCLoose
-            return None
-
-        if isinstance(main, list):
-            parts = set(protocol_for_payload(payload) for payload in main)
-            # If all same protocol, return it
-            if len(parts) == 1:
-                return parts.pop()
-            # If strict protocol detected, return it, preferring JSONRPCv2.
-            # This means a batch of JSONRPCv1 will fail
-            for protocol in (JSONRPCv2, JSONRPCv1):
-                if protocol in parts:
-                    return protocol
-            if parts:
-                return JSONRPCLoose
-            return None
-
-        return protocol_for_payload(main)
 
 
 class JSONRPCv1(JSONRPC):
@@ -480,3 +415,45 @@ class JSONRPCLoose(JSONRPC):
 
         # Can be None
         return payload['result']
+
+
+class JSONRPCAutoDetect(JSONRPCv2):
+
+    @classmethod
+    def message_to_item(cls, message):
+        return cls.detect_protocol(message)
+
+    @classmethod
+    def detect_protocol(cls, message):
+        '''Attempt to detect the protocol from the message.'''
+        main = cls._message_to_payload(message)
+
+        def protocol_for_payload(payload):
+            if not isinstance(payload, dict):
+                return JSONRPCLoose   # Will error
+            # Obey an explicit "jsonrpc"
+            version = payload.get('jsonrpc')
+            if version == '2.0':
+                return JSONRPCv2
+            if version == '1.0':
+                return JSONRPCv1
+
+            # Now to decide between JSONRPCLoose and JSONRPCv1 if possible
+            if 'result' in payload and 'error' in payload:
+                return JSONRPCv1
+            return JSONRPCLoose
+
+        if isinstance(main, list):
+            parts = set(protocol_for_payload(payload) for payload in main)
+            # If all same protocol, return it
+            if len(parts) == 1:
+                return parts.pop()
+            # If strict protocol detected, return it, preferring JSONRPCv2.
+            # This means a batch of JSONRPCv1 will fail
+            for protocol in (JSONRPCv2, JSONRPCv1):
+                if protocol in parts:
+                    return protocol
+            # Will error if no parts
+            return JSONRPCLoose
+
+        return protocol_for_payload(main)

@@ -18,7 +18,7 @@ Exceptions
 .. exception:: SOCKSProtocolError
 
    A subclass of :class:`SOCKSError`.  Raised when the proxy does not
-   follow the SOCKS protocol.
+   follow the ``SOCKS`` protocol.
 
 .. exception:: SOCKSFailure
 
@@ -44,7 +44,7 @@ and password.  Usernames can be used by all SOCKS protocols, but only
 
   .. attribute:: password
 
-     A string.  Ignored by the :class:`SOCKS4` and class:`SOCKS4a`
+     A string.  Ignored by the :class:`SOCKS4` and :class:`SOCKS4a`
      protocols.
 
 
