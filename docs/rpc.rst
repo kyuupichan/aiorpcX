@@ -156,8 +156,79 @@ An instance of one of these classes is called an :dfn:`item`.
   .. method:: add_request(method, args=None, on_done=None)
 
     Add a request to the batch.  A callback can be specified that will
-    be called when the request completes.
+    be called when the request completes.  Returns the
+    :class:`RPCRequestOut` request that was added to the batch.
 
   .. method:: add_notification(method, args=None)
 
     Add a notification to the batch.
+
+
+RPC Protocol Classes
+--------------------
+
+RPC protocol classes should inherit from :class:`RPCProtocolBase`.
+
+It provides a few utility functions returning :class:`RPCError`
+objects and should provide some constant class attributes.
+
+
+.. class:: RPCProtocolBase
+
+
+  .. attribute:: INTERNAL_ERROR
+
+   The error code to use for an internal error.
+
+  .. attribute:: INVALID_ARGS
+
+   The error code to use when an RPC request passes invalid arguments.
+
+  .. attribute:: INVALID_REQUEST
+
+   The error code to use when an RPC request is invalid.
+
+  .. attribute:: METHOD_NOT_FOUND
+
+   The error code to use when an RPC request is for a non-existent
+   method.
+
+  .. classmethod:: JSONRPC.internal_error(request_id)
+
+   Return an :class:`RPCError` object with error code
+   :attr:`INTERNAL_ERROR` for the given request ID.  The error message
+   will be ``"internal error processing request"``.
+
+   :param request_id: the request ID, normally an integer or string
+   :return: the error object
+   :rtype: :class:`RPCError`
+
+  .. classmethod:: JSONRPC.args_error(message)
+
+   Return an :class:`RPCError` object with error code
+   :attr:`INVALID_ARGS` with the given error message and a request ID
+   of :const:`None`.
+
+   :param str message: the error message
+   :return: the error object
+   :rtype: :class:`RPCError`
+
+  .. classmethod:: JSONRPC.invalid_request(message)
+
+   Return an :class:`RPCError` object with error code
+   :attr:`INVALID_REQUEST` with the given error message and a request
+   ID :const:`None`.
+
+   :param str message: the error message
+   :return: the error object
+   :rtype: :class:`RPCError`
+
+  .. classmethod:: JSONRPC.method_not_found(message)
+
+   Return an :class:`RPCError` object with error code
+   :attr:`METHOD_NOT_FOUND` with the given error message and a request
+   ID :const:`None`.
+
+   :param str message: the error message
+   :return: the error object
+   :rtype: :class:`RPCError`
