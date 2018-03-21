@@ -246,6 +246,7 @@ class MyRPCProcessor(RPCProcessor):
         alogger.warning = self.asyncio_log
         alogger.error = self.asyncio_log
         self.asyncio_logs = []
+        self.max_response_size = 500
 
     # This is just to verify things are as expected
     def __enter__(self):
@@ -1294,3 +1295,23 @@ def test_protocol_autodetection_v2():
         rpc.protocol = JSONRPCAutoDetect
         rpc.message_received(b'{"jsonrpc": "2.0", "method": "m", "id" :0}')
         assert rpc.protocol == JSONRPCv2
+
+
+def test_max_response_size():
+    with MyRPCProcessor() as rpc:
+        rpc.add_request(RPCRequest('echo', ['a' * rpc.max_response_size], 0))
+        rpc.expect_error(rpc.protocol.INVALID_REQUEST, "response too large", 0)
+
+
+def test_max_response_size_for_batch():
+    with MyRPCProcessor() as rpc:
+        rpc.add_batch(RPCBatch([
+            RPCRequest('echo', ["foo"], 0),
+            RPCRequest('echo', ['a' * rpc.max_response_size], 1),
+            RPCRequest('sleep', None, 2),
+        ]))
+        tasks = list(rpc.work_queue.tasks)
+        rpc.expect_error(rpc.protocol.INVALID_REQUEST, "response too large",
+                         None)
+        rpc.yield_to_loop()  # Allow the sleep to cancel
+        assert sum(task.cancelled() for task in tasks) == 1

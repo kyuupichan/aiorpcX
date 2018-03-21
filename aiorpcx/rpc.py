@@ -227,6 +227,10 @@ class RPCHelperBase(object):
     '''Abstract base class of an object that handles RPC requests, job
     queueing and message sending for RPCProcessor.'''
 
+    # The maximum response size.  Responses above this size send an
+    # error response instead.
+    max_response_size = 1000000
+
     def send_message(self, message):
         '''Called when there is a message to send over the network.  The
         message is unframed.  If a request was cancelled, send_message
@@ -298,9 +302,9 @@ class RPCProtocolBase(object):
         return RPCError(cls.INVALID_ARGS, message, None)
 
     @classmethod
-    def invalid_request(cls, message):
+    def invalid_request(cls, message, request_id=None):
         '''Return an invalid request RPCError object.'''
-        return RPCError(cls.INVALID_REQUEST, message, None)
+        return RPCError(cls.INVALID_REQUEST, message, request_id)
 
     @classmethod
     def method_not_found(cls, message):
@@ -367,10 +371,20 @@ class RPCProcessor(object):
             error = self.protocol.internal_error(request_id)
             return self.protocol.error_message(error)
 
-    def _send_response(self, request, task):
+    def _send_response(self, response, request):
+        if len(response) > self.helper.max_response_size > 0:
+            msg = f'response too large (at least {len(response)} bytes)'
+            request_id = getattr(request, 'request_id', None)
+            error = self.protocol.invalid_request(msg, request_id)
+            self.logger.debug('error processing request: %s %s',
+                              repr(error), repr(request))
+            response = self.protocol.error_message(error)
+        self.helper.send_message(response)
+
+    def _handle_request(self, request, task):
         response = self._response_message(request, task)
         if response:
-            self.helper.send_message(response)
+            self._send_response(response, request)
 
     def _rpc_call(self, request):
         '''Return a partial function call that calls the RPC function
@@ -449,25 +463,37 @@ class RPCProcessor(object):
         collect the results.  Send a response, if not empty, once all
         results have come in.
         '''
+        def send_batch_response():
+            response = self.protocol.batch_message_from_parts(parts)
+            self._send_response(response, batch)
+
+        def fail_batch():
+            nonlocal failed
+            failed = True
+            for task in tasks:
+                task.cancel()
+
         def collect_response(request, task):
-            nonlocal cancelled
+            nonlocal failed, response_size
             # Collect the response even if we don't use it to avoid
             # diagnostics about uncomsumed exceptions
             response = self._response_message(request, task)
             if response:
                 parts.append(response)
+                response_size += len(response)
+                if response_size > self.helper.max_response_size > 0:
+                    send_batch_response()
+                    fail_batch()
             tasks.remove(task)
-            # If any task was cancelled cancel the others
-            if task.cancelled() and not cancelled:
-                cancelled = True
-                for task in tasks:
-                    task.cancel()
-            if not tasks and parts and not cancelled:
-                message = self.protocol.batch_message_from_parts(parts)
-                self.helper.send_message(message)
+            # If any task was cancelled fail the batch
+            if task.cancelled() and not failed:
+                fail_batch()
+            if not tasks and parts and not failed:
+                send_batch_response()
 
         parts = []
-        cancelled = False
+        failed = False
+        response_size = 0
         tasks = set()
         for request in batch:
             task = self.helper.create_task(self._process_request(request))
@@ -523,7 +549,7 @@ class RPCProcessor(object):
         item = self.protocol.message_to_item(message)
         if isinstance(item, RPCRequest):
             task = self.helper.create_task(self._process_request(item))
-            task.add_done_callback(partial(self._send_response, item))
+            task.add_done_callback(partial(self._handle_request, item))
         elif isinstance(item, RPCResponse):
             self._process_response(item)
         elif isinstance(item, RPCBatch):

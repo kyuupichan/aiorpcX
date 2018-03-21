@@ -213,13 +213,14 @@ objects and should provide some constant class attributes.
    :return: the error object
    :rtype: :class:`RPCError`
 
-  .. classmethod:: JSONRPC.invalid_request(message)
+  .. classmethod:: JSONRPC.invalid_request(message, request_id=None)
 
    Return an :class:`RPCError` object with error code
-   :attr:`INVALID_REQUEST` with the given error message and a request
-   ID :const:`None`.
+   :attr:`INVALID_REQUEST` with the given error message and
+   request ID.
 
    :param str message: the error message
+   :param request_id: the request ID, normally an integer or string
    :return: the error object
    :rtype: :class:`RPCError`
 
