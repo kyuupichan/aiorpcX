@@ -123,12 +123,15 @@ class WorkQueue(object):
         for task in self.tasks:
             task.cancel()
 
-    def create_task(self, coro):
+    def create_task(self, coro, block=True):
         '''Add a task to the run queue.
 
         coro - a coroutine object
+        block - if true, counts against concurrency total
         '''
-        task = self.loop.create_task(self._acquire_and_run(coro))
+        if block:
+            coro = self._acquire_and_run(coro)
+        task = self.loop.create_task(coro)
         task.add_done_callback(self.tasks.remove)
         self.tasks.add(task)
         return task

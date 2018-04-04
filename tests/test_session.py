@@ -314,3 +314,16 @@ class TestClientSession:
             limit = None
             client.resume_writing()
             assert called == framed_msgs[2:]
+
+    @pytest.mark.asyncio
+    async def test_concurrency(self, server):
+        async with ClientSession('localhost', server.port) as client:
+            # Test high bw usage crushes concurrency to 1
+            client.bw_charge = 1000 * 1000 * 1000
+            prior_mc = client.work_queue.max_concurrent
+            client._update_concurrency()
+            assert 1 == client.work_queue.max_concurrent < prior_mc
+            # Test passage of time restores it
+            client.bw_time -= 1000 * 1000 * 1000
+            client._update_concurrency()
+            assert client.work_queue.max_concurrent == prior_mc
