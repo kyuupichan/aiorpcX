@@ -52,7 +52,7 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         self.framer = framer or self.default_framer()
         self.transport = None
         # Concurrency
-        self.max_concurrent = 16
+        self.max_concurrent = 10
         # Set when a connection is made
         self._address = None
         # For logger.debug messsages
@@ -70,7 +70,8 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         self.recv_count = 0
         self.recv_size = 0
         self.last_recv = self.start_time
-        # Amount of bandwidth equal to 1 second of CPU time
+        # Bandwidth usage per hour before throttling starts
+        self.bw_limit = 2000000
         self.bw_time = self.start_time
         self.bw_charge = 0
 
@@ -87,12 +88,12 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
     def _update_concurrency(self):
         now = time.time()
         # Reduce the recorded usage in proportion to the elapsed time
-        # Arbitrarily choose 4k/s as break-even
-        refund = (now - self.bw_time) * 4000
-        self.bw_charge = max(0, self.bw_charge - refund)
+        refund = (now - self.bw_time) * (self.bw_limit / 3600)
+        self.bw_charge = max(0, self.bw_charge - int(refund))
         self.bw_time = now
-        # Reduce concurrency allocation by 1 for each 1m cost
-        target = max(1, self.max_concurrent - int(self.bw_charge / 1000000))
+        # Reduce concurrency allocation by 1 for each whole bw_limit used
+        throttle = int(self.bw_charge / self.bw_limit)
+        target = max(1, self.max_concurrent - throttle)
         current = self.work_queue.max_concurrent
         if target != current:
             self.logger.info(f'changing task concurrency from {current} '
