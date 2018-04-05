@@ -339,46 +339,50 @@ class RPCProcessor(object):
         # RPCError raised processing requests.
         self.internal_errors = 0
 
-    def _response_message(self, request, task):
-        '''Return a response message to a request, or None if no message
-        should be sent.  Log errors.
-
-        Notifications return a response only if ill-formed.'''
-        request_id = request.request_id
-        try:
-            result = task.result()
-            if request_id is None:
-                return None
-            response = RPCResponse(result, request_id)
-            return self.protocol.response_message(response)
-        except CancelledError as error:
-            return None
-        except RPCError as error:
+    def _error_message(self, request, error, force=False):
+        '''Return an error message when an exception (error) is raised.'''
+        # Batches don't have a request ID
+        request_id = getattr(request, 'request_id', None)
+        if isinstance(error, RPCError):
             self.errors += 1
             error.request_id = request_id
             self.logger.debug('error processing request: %s %s',
                               repr(error), repr(request))
-            # Ill-formed notifications require a response
-            if request_id is None and not isinstance(request.method, RPCError):
+            # Notifications don't get a response, unless ill-formed
+            if request_id is None and not force:
                 return None
-            return self.protocol.error_message(error)
-        except Exception:
+        else:
             self.internal_errors += 1
             self.logger.exception('exception raised processing request: %s',
                                   repr(request))
             if request_id is None:
                 return None
             error = self.protocol.internal_error(request_id)
-            return self.protocol.error_message(error)
+
+        return self.protocol.error_message(error)
+
+    def _response_message(self, request, task):
+        '''Return a response message to a request, or None if no message
+        should be sent.  Log errors.
+
+        Notifications return a response only if ill-formed.'''
+        try:
+            result = task.result()
+            if request.request_id is None:
+                return None
+            response = RPCResponse(result, request.request_id)
+            return self.protocol.response_message(response)
+        except CancelledError as error:
+            return None
+        except Exception as error:
+            return self._error_message(request, error,
+                                       isinstance(request.method, RPCError))
 
     def _send_response(self, response, request):
         if len(response) > self.helper.max_response_size > 0:
             msg = f'response too large (at least {len(response)} bytes)'
-            request_id = getattr(request, 'request_id', None)
-            error = self.protocol.invalid_request(msg, request_id)
-            self.logger.debug('error processing request: %s %s',
-                              repr(error), repr(request))
-            response = self.protocol.error_message(error)
+            error = self.protocol.invalid_request(msg)
+            response = self._error_message(request, error, True)
         self.helper.send_message(response)
 
     def _handle_request(self, request, task):

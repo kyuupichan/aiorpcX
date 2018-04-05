@@ -1298,9 +1298,18 @@ def test_protocol_autodetection_v2():
 
 
 def test_max_response_size():
+    # Test max_response_size is observed
     with MyRPCProcessor() as rpc:
         rpc.add_request(RPCRequest('echo', ['a' * rpc.max_response_size], 0))
         rpc.expect_error(rpc.protocol.INVALID_REQUEST, "response too large", 0)
+        assert rpc.errors == 1
+
+    # Test 0 means no limit
+    with MyRPCProcessor() as rpc:
+        rpc.max_response_size = 0
+        rpc.add_request(RPCRequest('echo', ['a' * 5000000], 0))
+        rpc.consume_one_response()
+        assert rpc.errors == 0
 
 
 def test_max_response_size_for_batch():
