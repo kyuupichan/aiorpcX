@@ -159,7 +159,8 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         return self._address
 
     def peer_address_str(self):
-        '''Returns the peer's address as a human-readable string.'''
+        '''Returns the peer's IP address and port as a human-readable
+        string.'''
         if not self._address:
             return 'unknown'
         ip_addr_str, port = self._address[:2]
