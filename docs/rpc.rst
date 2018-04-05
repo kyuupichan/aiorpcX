@@ -144,7 +144,7 @@ An instance of one of these classes is called an :dfn:`item`.
   callback is passed the batch object.
 
   Each non-notification item in an :class:`RPCBatchOut` object is
-  itself an :class:`RPCRequestOut` object that can be independenlty
+  itself an :class:`RPCRequestOut` object that can be independently
   waited on or cancelled.  Notification items are :class:`RPCRequest`
   objects.  Since batches are responded to as a whole, all member
   requests will be completed simultaneously.  The order of callbacks
@@ -168,9 +168,9 @@ RPC Protocol Classes
 --------------------
 
 RPC protocol classes should inherit from :class:`RPCProtocolBase`.
-
-It provides a few utility functions returning :class:`RPCError`
-objects and should provide some constant class attributes.
+The base class provides a few utility functions returning
+:class:`RPCError` objects.  The derived class should redefine some
+constant class attributes.
 
 
 .. class:: RPCProtocolBase
@@ -178,20 +178,21 @@ objects and should provide some constant class attributes.
 
   .. attribute:: INTERNAL_ERROR
 
-   The error code to use for an internal error.
+   The integer error code to use for an internal error.
 
   .. attribute:: INVALID_ARGS
 
-   The error code to use when an RPC request passes invalid arguments.
+   The integer error code to use when an RPC request passes invalid
+   arguments.
 
   .. attribute:: INVALID_REQUEST
 
-   The error code to use when an RPC request is invalid.
+   The integer error code to use when an RPC request is invalid.
 
   .. attribute:: METHOD_NOT_FOUND
 
-   The error code to use when an RPC request is for a non-existent
-   method.
+   The integer error code to use when an RPC request is for a
+   non-existent method.
 
   .. classmethod:: JSONRPC.internal_error(request_id)
 

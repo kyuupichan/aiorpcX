@@ -72,7 +72,7 @@ Convenience classes are provided for client and server sessions.
 
 
 .. class:: ClientSession(host, port, *, rpc_protocol=None, framer=None, \
-           scheduler=None, loop=None, logger=None, proxy=None, **kwargs)
+           scheduler=None, loop=None, proxy=None, **kwargs)
 
   An instance of an :class:`asyncio.Protocol` class that represents an
   RPC session with a remote server at *host* and *port*, as documented

@@ -319,10 +319,10 @@ class RPCProcessor(object):
     responses and notifications.
     '''
 
-    def __init__(self, protocol, helper, logger=None):
+    def __init__(self, protocol, helper):
         self.protocol = protocol
         self.helper = helper
-        self.logger = logger or logging.getLogger(self.__class__.__name__)
+        self.logger = logging.getLogger(self.__class__.__name__)
         # Sent requests and batch requests awaiting a response.  For an
         # RPCRequestOut object the key is its request ID; for a batch
         # it is its frozenset of request IDs

@@ -81,7 +81,7 @@ of its auto-detection class methods is likely more useful.
   typically a (host, port) pair for IPv4, and a (host, port, flowinfo,
   scopeid) tuple for IPv6.
 
-  The protocol is one of :class:`SOCKS4`, :class:`SOCKS4a` and
+  The *protocol* is one of :class:`SOCKS4`, :class:`SOCKS4a` and
   :class:`SOCKS5`.
 
   *auth* is a :class:`SOCKSUserAuth` object or :const:`None`.

@@ -28,7 +28,7 @@ __all__ = ('ClientSession', 'ServerSession', 'Server')
 
 
 import asyncio
-from collections import deque
+import collections
 import logging
 import ssl
 import time
@@ -44,11 +44,11 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
 
     concurrency_interval = 5
 
-    def __init__(self, rpc_protocol=None, framer=None, loop=None, logger=None):
+    def __init__(self, rpc_protocol=None, framer=None, loop=None):
         self.loop = loop or asyncio.get_event_loop()
-        self.logger = logger or logging.getLogger(self.__class__.__name__)
+        self.logger = logging.getLogger(self.__class__.__name__)
         rpc_protocol = rpc_protocol or self.default_rpc_protocol()
-        self.rpc = RPCProcessor(rpc_protocol, self, logger=logger)
+        self.rpc = RPCProcessor(rpc_protocol, self)
         self.framer = framer or self.default_framer()
         self.transport = None
         # Concurrency
@@ -57,11 +57,9 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         self._address = None
         # For logger.debug messsages
         self.verbosity = 0
-        # Session ID is set on connection
-        self.session_id = None
         # Pausing sends when socket is full
         self.paused = False
-        self.paused_messages = deque()
+        self.paused_messages = collections.deque()
         # Statistics.  The RPC object also keeps its own statistics.
         self.start_time = time.time()
         self.send_count = 0
@@ -134,7 +132,8 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
             self.last_send = time.time()
             if self.verbosity >= 4:
                 self.logger.debug(f'Sending framed message {framed_message}')
-            self.transport.write(framed_message)
+            if self.transport:
+                self.transport.write(framed_message)
 
     def pause_writing(self):
         '''Transport calls when the send buffer is full.'''
@@ -193,6 +192,7 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         self.work_queue = WorkQueue(loop=self.loop,
                                     max_concurrent=self.max_concurrent)
         self.work_queue.create_task(self._concurrency_loop(), block=False)
+        self.logger.debug(f'connected to {self.peer_address_str()}')
 
     def connection_lost(self, exc):
         '''Called by asyncio when the connection closes.
@@ -282,8 +282,8 @@ class ClientSession(SessionBase):
     '''
 
     def __init__(self, host=None, port=None, *, rpc_protocol=None, framer=None,
-                 loop=None, logger=None, proxy=None, **kwargs):
-        super().__init__(rpc_protocol, framer, loop, logger)
+                 loop=None, proxy=None, **kwargs):
+        super().__init__(rpc_protocol, framer, loop)
         self.host = host
         self.port = port
         self.kwargs = kwargs

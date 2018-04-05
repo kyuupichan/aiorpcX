@@ -213,29 +213,28 @@ class TestClientSession:
 
     @pytest.mark.asyncio
     async def test_logging(self, server):
-        logger = MyLogger()
-        async with ClientSession('localhost', server.port,
-                                 logger=logger) as client:
+        async with ClientSession('localhost', server.port) as client:
+            client.logger = MyLogger()
             client.verbosity = 4
             request = client.send_request('ping', ['wait'])
-            assert len(logger.debugs) == 1
+            assert len(client.logger.debugs) == 1
             await request
-            assert len(logger.debugs) == 2
+            assert len(client.logger.debugs) == 2
 
     @pytest.mark.asyncio
     async def test_framer_MemoryError(self, server):
-        logger = MyLogger()
         framer = NewlineFramer(5)
-        async with ClientSession('localhost', server.port, framer=framer,
-                                 logger=logger) as client:
+        async with ClientSession('localhost', server.port,
+                                 framer=framer) as client:
+            client.logger = MyLogger()
             msg = 'w' * 50
             raw_msg = msg.encode()
             # Even though long it will be sent in one bit
             request = client.send_request('ping', [msg])
             assert await request == msg
-            assert not logger.warnings
+            assert not client.logger.warnings
             client.data_received(raw_msg)  # Unframed; no \n
-            assert len(logger.warnings) == 1
+            assert len(client.logger.warnings) == 1
 
     @pytest.mark.asyncio
     async def test_set_timeout(self, server):

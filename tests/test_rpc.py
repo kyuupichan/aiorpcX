@@ -246,7 +246,8 @@ class MyRPCProcessor(RPCProcessor):
     def __init__(self, protocol=None):
         protocol = protocol or JSONRPCv2
         self.loop = asyncio.get_event_loop()
-        super().__init__(protocol, self, logger=self)
+        super().__init__(protocol, self)
+        self.logger = self
         self.work_queue = WorkQueue(loop=self.loop)
         self.responses = deque()
         self.debug_messages = []
