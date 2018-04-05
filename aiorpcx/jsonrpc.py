@@ -358,7 +358,7 @@ class JSONRPCv2(JSONRPC):
         if request.request_id is not None:
             payload['id'] = request.request_id
         # Preserve empty dicts as missing params is read as an array
-        if request.args != []:
+        if request.args or request.args == {}:
             payload['params'] = request.args
         return payload
 

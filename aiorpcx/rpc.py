@@ -47,7 +47,7 @@ class RPCRequest(object):
         if args is None:
             self.args = []
         else:
-            if not isinstance(args, (list, dict)):
+            if not isinstance(args, (list, tuple, dict)):
                 raise ValueError('request args must be a list or dictionary')
             self.args = args
         self.request_id = request_id

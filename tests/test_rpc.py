@@ -43,18 +43,30 @@ def test_RPCRequest():
     assert request.request_id == 0
     assert not request.is_notification()
     assert repr(request) == "RPCRequest('method', [1], 0)"
+    request = RPCRequestOut('method', (1, ), None)
+    assert request.method == 'method'
+    assert request.args == (1, )
+    assert request.request_id == 1
+    assert not request.is_notification()
+    assert repr(request) == "RPCRequest('method', (1,), 1)"
     request = RPCRequestOut('foo', {"bar": 1}, None)
     assert request.method == 'foo'
     assert request.args == {"bar": 1}
-    assert request.request_id == 1
+    assert request.request_id == 2
     assert not request.is_notification()
-    assert repr(request) == "RPCRequest('foo', {'bar': 1}, 1)"
+    assert repr(request) == "RPCRequest('foo', {'bar': 1}, 2)"
     request = RPCRequest('foo', [], None)
     assert request.method == 'foo'
     assert request.args == []
     assert request.request_id is None
     assert request.is_notification()
     assert repr(request) == "RPCRequest('foo', [], None)"
+    request = RPCRequest('foo', (), None)
+    assert request.method == 'foo'
+    assert request.args == ()
+    assert request.request_id is None
+    assert request.is_notification()
+    assert repr(request) == "RPCRequest('foo', (), None)"
     # Check {} is preserved (different call semantics)
     for request in [RPCRequest('add', {}, 0), RPCRequestOut('add', {}, None)]:
         assert request.method == 'add'
