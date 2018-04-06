@@ -205,7 +205,6 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         self._address = None
         self.transport = None
         self.work_queue.cancel_all()
-        self.work_queue = None
         for request in self.all_requests():
             request.cancel()
 
