@@ -192,13 +192,11 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         self.work_queue = WorkQueue(loop=self.loop,
                                     max_concurrent=self.max_concurrent)
         self.work_queue.create_task(self._concurrency_loop(), block=False)
-        self.logger.debug(f'connected to {self.peer_address_str()}')
 
     def connection_lost(self, exc):
         '''Called by asyncio when the connection closes.
 
         Tear down things done in connection_made.'''
-        self.logger.debug(f'connection lost to {self.peer_address_str()}')
         self._address = None
         self.transport = None
         self.work_queue.cancel_all()
