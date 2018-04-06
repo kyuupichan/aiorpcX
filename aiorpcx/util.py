@@ -132,6 +132,7 @@ class WorkQueue(object):
         if block:
             coro = self._acquire_and_run(coro)
         task = self.loop.create_task(coro)
+        task.block = block
         task.add_done_callback(self.tasks.remove)
         self.tasks.add(task)
         return task
