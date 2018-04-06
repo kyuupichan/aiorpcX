@@ -28,7 +28,6 @@ __all__ = ('ClientSession', 'ServerSession', 'Server')
 
 
 import asyncio
-import collections
 import logging
 import ssl
 import time
@@ -59,7 +58,10 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         self.verbosity = 0
         # Pausing sends when socket is full
         self.paused = False
-        self.paused_messages = collections.deque()
+        self.paused_messages = []
+        # Close once the send queue is exhausted.  An unfortunate hack
+        # necessitated by asyncio's non-blocking socket writes
+        self.close_after_send = False
         # Statistics.  The RPC object also keeps its own statistics.
         self.start_time = time.time()
         self.send_count = 0
@@ -134,6 +136,8 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
                 self.logger.debug(f'Sending framed message {framed_message}')
             if self.transport:
                 self.transport.write(framed_message)
+                if self.close_after_send or self.rpc.errors >= 10:
+                    self.close()
 
     def pause_writing(self):
         '''Transport calls when the send buffer is full.'''
@@ -146,8 +150,8 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         self.logger.info('resuming processing')
         self.paused = False
         self.transport.resume_reading()
-        while self.paused_messages and not self.paused:
-            self.send_framed_message(self.paused_messages.popleft())
+        self.send_framed_message(b''.join(self.paused_messages))
+        self.paused_messages.clear()
 
     def peer_address(self):
         '''Returns the peer's address (Python networking address), or None if

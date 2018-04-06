@@ -308,11 +308,11 @@ class TestClientSession:
                 client.send_message(msg)
             assert not called
             client.resume_writing()
-            assert called == framed_msgs[:2]
+            assert called == b''.join(msgs)
             called.clear()
             limit = None
             client.resume_writing()
-            assert called == framed_msgs[2:]
+            assert not called
 
     @pytest.mark.asyncio
     async def test_concurrency(self, server):
