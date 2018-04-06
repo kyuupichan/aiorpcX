@@ -308,11 +308,10 @@ class TestClientSession:
                 client.send_message(msg)
             assert not called
             client.resume_writing()
-            assert called == b''.join(msgs)
-            called.clear()
+            assert called == [b''.join(framed_msgs)]
             limit = None
-            client.resume_writing()
-            assert not called
+            with pytest.raises(RuntimeError):
+                client.resume_writing()
 
     @pytest.mark.asyncio
     async def test_concurrency(self, server):
@@ -326,3 +325,15 @@ class TestClientSession:
             client.bw_time -= 1000 * 1000 * 1000
             client._update_concurrency()
             assert client.work_queue.max_concurrent == prior_mc
+
+    @pytest.mark.asyncio
+    async def test_close_on_many_errors(self, server):
+        messages = []
+
+        async with ClientSession('localhost', server.port) as client:
+            client.rpc.message_received = messages.append
+            for n in range(client.max_errors + 5):
+                client.send_message(b'boo')
+            await asyncio.sleep(0.01)
+            assert client.transport is None
+            assert len(messages) == client.max_errors

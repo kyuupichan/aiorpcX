@@ -42,6 +42,7 @@ from .util import WorkQueue
 class SessionBase(asyncio.Protocol, RPCHelperBase):
 
     concurrency_interval = 5
+    max_errors = 10
 
     def __init__(self, rpc_protocol=None, framer=None, loop=None):
         self.loop = loop or asyncio.get_event_loop()
@@ -136,7 +137,7 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
                 self.logger.debug(f'Sending framed message {framed_message}')
             if self.transport:
                 self.transport.write(framed_message)
-                if self.close_after_send or self.rpc.errors >= 10:
+                if self.close_after_send or self.rpc.errors >= self.max_errors:
                     self.close()
 
     def pause_writing(self):
