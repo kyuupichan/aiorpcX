@@ -53,15 +53,12 @@ A simple wrapper around an :class:`asyncio.Server` object (see
 
   .. method:: close()
 
-    Close the listening socket if the server is listening.
+    Close the listening socket if the server is listening, and wait
+    for it to close.  Return immediately if the server is not
+    listening.
 
     This does nothing to protocols and transports handling existing
     connections.  On return :attr:`server` is :const:`None`.
-
-  .. method:: wait_closed()
-
-    Wait until the server stops listening, or return immediately if
-    the server is not listening.
 
     This method is a `coroutine`_.
 
