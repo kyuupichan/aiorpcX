@@ -132,6 +132,8 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         self.send_framed_message(framed_message)
 
     def send_framed_message(self, framed_message):
+        if self.is_closing():
+            return
         if self.paused:
             self.paused_messages.append(framed_message)
         else:
@@ -141,10 +143,9 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
             self.last_send = time.time()
             if self.verbosity >= 4:
                 self.logger.debug(f'Sending framed message {framed_message}')
-            if self.transport:
-                self.transport.write(framed_message)
-                if self.close_after_send or self.rpc.errors >= self.max_errors:
-                    self.close()
+            self.transport.write(framed_message)
+            if self.close_after_send or self.rpc.errors >= self.max_errors:
+                self.close()
 
     def pause_writing(self):
         '''Transport calls when the send buffer is full.'''
@@ -215,7 +216,7 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
     # App layer
     def is_closing(self):
         '''Return True if the connection is closing.'''
-        return self.transport and self.transport.is_closing()
+        return not self.transport or self.transport.is_closing()
 
     def close(self):
         '''Close the connection.'''
