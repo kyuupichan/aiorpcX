@@ -5,7 +5,7 @@ from .socks import *
 from .session import *
 from .util import *
 
-_version = (0, 5, 2)
+_version = (0, 5, 3)
 _version_str = '.'.join(str(part) for part in _version)
 
 __all__ = (framing.__all__ +
