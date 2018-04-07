@@ -317,13 +317,13 @@ class TestClientSession:
         async with ClientSession('localhost', server.port) as client:
             # Test high bw usage crushes concurrency to 1
             client.bw_charge = 1000 * 1000 * 1000
-            prior_mc = client.work_queue.max_concurrent
-            client._update_concurrency()
-            assert 1 == client.work_queue.max_concurrent < prior_mc
+            prior_mc = client.concurrency.max_concurrent
+            await client._update_concurrency()
+            assert 1 == client.concurrency.max_concurrent < prior_mc
             # Test passage of time restores it
             client.bw_time -= 1000 * 1000 * 1000
-            client._update_concurrency()
-            assert client.work_queue.max_concurrent == prior_mc
+            await client._update_concurrency()
+            assert client.concurrency.max_concurrent == prior_mc
 
     @pytest.mark.asyncio
     async def test_close_on_many_errors(self, server):

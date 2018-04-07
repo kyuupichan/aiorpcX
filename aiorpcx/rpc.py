@@ -245,6 +245,10 @@ class RPCHelperBase(object):
         '''Create a task to run the given coroutine.  Return the task.'''
         raise NotImplementedError
 
+    def semaphore(self):
+        '''Return a semaphore to limit concurrency.'''
+        raise NotImplementedError
+
     def notification_handler(self, method):
         '''Return the handler for the given notification.
 
@@ -338,6 +342,8 @@ class RPCProcessor(object):
         # This includes internal errors, which are exceptions other than
         # RPCError raised processing requests.
         self.internal_errors = 0
+        # Incoming unprocessed request count
+        self.pending_requests = 0
 
     def _error_message(self, request, error, force=False):
         '''Return an error message when an exception (error) is raised.'''
@@ -456,11 +462,16 @@ class RPCProcessor(object):
 
         Raises RPCError to ill-formed or erroneous requests.'''
         self.recv_count += 1
-        rpc_call = self._rpc_call(request)
-        if is_async_call(rpc_call):
-            return await rpc_call()
-        else:
-            return rpc_call()
+        self.pending_requests += 1
+        try:
+            async with self.helper.semaphore():
+                rpc_call = self._rpc_call(request)
+                if is_async_call(rpc_call):
+                    return await rpc_call()
+                else:
+                    return rpc_call()
+        finally:
+            self.pending_requests -= 1
 
     def _process_request_batch(self, batch):
         '''Process a request batch.  Create a task for each sub-request, and

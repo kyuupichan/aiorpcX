@@ -5,8 +5,8 @@ import time
 
 import pytest
 
-from aiorpcx.util import (SignatureInfo, signature_info, WorkQueue,
-                          Timeout, is_async_call)
+from aiorpcx.util import (SignatureInfo, signature_info, Concurrency,
+                          Timeout, TaskSet, is_async_call)
 
 
 async def coro(x, y):
@@ -66,89 +66,87 @@ def run_briefly(loop):
     t = loop.create_task(gen)
     loop.run_until_complete(t)
 
-def test_wq_constructor():
-    wq = WorkQueue()
-    assert wq.loop == asyncio.get_event_loop()
-    event_loop = asyncio.new_event_loop()
-    wq = WorkQueue(loop=event_loop)
-    assert wq.loop == event_loop
-    WorkQueue(max_concurrent=0)
-    WorkQueue(max_concurrent=32)
+def test_concurrency_constructor():
+    Concurrency(3)
+    Concurrency(max_concurrent=0)
+    Concurrency(max_concurrent=32)
     with pytest.raises(RuntimeError):
-        WorkQueue(max_concurrent=-1)
+        Concurrency(max_concurrent=-1)
     with pytest.raises(RuntimeError):
-        WorkQueue(max_concurrent=2.5)
+        Concurrency(max_concurrent=2.5)
 
 
-def wq_max(wq):
+async def concurrency_max(c):
     q = []
 
-    while wq.tasks:
-        run_briefly(wq.loop)
-
-    fut = wq.loop.create_future()
+    loop = asyncio.get_event_loop()
+    fut = loop.create_future()
     async def work():
-        q.append(None)
-        await fut
+        async with c.semaphore:
+            q.append(None)
+            await fut
 
+    tasks = []
     for n in range(16):
-        wq.create_task(work())
+        tasks.append(loop.create_task(work()))
         prior_len = len(q)
-        run_briefly(wq.loop)
+        await asyncio.sleep(0)
         if len(q) == prior_len:
             break
 
     fut.set_result(len(q))
-    if not wq.max_concurrent:   # Ugh
-        wq.max_concurrent = 1
-    if wq.tasks:
-        wq.loop.run_until_complete(asyncio.gather(*wq.tasks, loop=wq.loop))
+    if tasks:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, loop=loop, return_exceptions=True)
 
     return fut.result()
 
 
-def test_max_concurrent():
-    wq = WorkQueue(max_concurrent=3)
-    assert wq.max_concurrent == 3
-    assert wq_max(wq) == 3
-    wq.max_concurrent = 3
-    assert wq.max_concurrent == 3
-    assert wq_max(wq) == 3
-    wq.max_concurrent = 1
-    assert wq.max_concurrent == 1
-    assert wq_max(wq) == 1
-    wq.max_concurrent = 0
-    assert wq.semaphore._value == 1
-    assert wq.max_concurrent == 0
-    assert wq_max(wq) == 0
-    wq.max_concurrent = 5
-    assert wq.max_concurrent == 5
-    assert wq_max(wq) == 5
+@pytest.mark.asyncio
+async def test_max_concurrent():
+    c = Concurrency(max_concurrent=3)
+    assert c.max_concurrent == 3
+    assert await concurrency_max(c) == 3
+    await c.set_max_concurrent(3)
+    assert c.max_concurrent == 3
+    assert await concurrency_max(c) == 3
+    await c.set_max_concurrent(1)
+    assert c.max_concurrent == 1
+    assert await concurrency_max(c) == 1
+    await c.set_max_concurrent(0)
+    assert c.semaphore._value == 0
+    assert c.max_concurrent == 0
+    assert await concurrency_max(c) == 0
+    await c.set_max_concurrent(5)
+    assert c.max_concurrent == 5
+    assert await concurrency_max(c) == 5
     with pytest.raises(RuntimeError):
-        wq.max_concurrent = -1
+        await c.set_max_concurrent(-1)
     with pytest.raises(RuntimeError):
-        wq.max_concurrent = 2.6
+        await c.set_max_concurrent(2.6)
 
 
-def test_cancel_all():
-    wq = WorkQueue()
+def test_task_set():
+    tasks = TaskSet()
+    loop = tasks.loop
 
-    fut = wq.loop.create_future()
+    fut = loop.create_future()
     async def work():
         await fut
 
     count = 3
+    my_tasks = []
     for _ in range(count):
-        wq.create_task(work())
-    run_briefly(wq.loop)
+        my_tasks.append(tasks.create_task(work()))
+    run_briefly(loop)
 
-    tasks = wq.tasks
     assert len(tasks) == count
-    wq.cancel_all()
-    run_briefly(wq.loop)
+    tasks.cancel_all()
+    run_briefly(loop)
 
-    assert all(task.cancelled() for task in tasks)
-    assert not wq.tasks
+    assert all(task.cancelled() for task in my_tasks)
+    assert not tasks
 
 
 def test_timeout():

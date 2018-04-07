@@ -13,8 +13,7 @@ import pytest
 from aiorpcx import *
 from aiorpcx.rpc import (RPCRequest, RPCRequestOut, RPCResponse, RPCBatch,
                          RPCBatchOut, RPCError, RPCHelperBase, RPCProcessor)
-from aiorpcx.util import WorkQueue
-from tests.test_util import run_briefly
+from tests.test_util import run_briefly, TaskSet
 
 
 class LogError(Exception):
@@ -195,6 +194,8 @@ def test_RPCHelperBase():
         helper.send_message(b'')
     with pytest.raises(NotImplementedError):
         helper.create_task(None)
+    with pytest.raises(NotImplementedError):
+        helper.semaphore()
     assert helper.notification_handler('n') is None
     assert helper.request_handler('n') is None
 
@@ -248,18 +249,19 @@ class MyRPCProcessor(RPCProcessor):
         self.loop = asyncio.get_event_loop()
         super().__init__(protocol, self)
         self.logger = self
-        self.work_queue = WorkQueue(loop=self.loop)
         self.responses = deque()
         self.debug_messages = []
         self.debug_message_count = 0
         self.error_messages = []
         self.error_message_count = 0
+        self.task_set = TaskSet()
         # Ensure our operation causes no unwanted errors
         alogger = logging.getLogger('asyncio')
         alogger.warning = self.asyncio_log
         alogger.error = self.asyncio_log
         self.asyncio_logs = []
         self.max_response_size = 500
+        self._semaphore = asyncio.Semaphore(10)
 
     # This is just to verify things are as expected
     def __enter__(self):
@@ -269,7 +271,10 @@ class MyRPCProcessor(RPCProcessor):
         assert not self.asyncio_logs
 
     def create_task(self, coro):
-        return self.work_queue.create_task(coro)
+        return self.task_set.create_task(coro)
+
+    def semaphore(self):
+        return self._semaphore
 
     # RPCHelper methods
     def send_message(self, message):
@@ -290,7 +295,7 @@ class MyRPCProcessor(RPCProcessor):
     # RPCHelper methods -- end
 
     def process_all(self):
-        tasks = self.work_queue.tasks
+        tasks = self.task_set.tasks
         if tasks:
             self.loop.run_until_complete(asyncio.wait(tasks))
         else:
@@ -313,7 +318,7 @@ class MyRPCProcessor(RPCProcessor):
         return result
 
     def all_done(self):
-        return not self.work_queue.tasks and not self.responses
+        return not self.task_set.tasks and not self.responses
 
     def expect_error(self, code, text, request_id):
         message = self.consume_one_response()
@@ -1102,7 +1107,7 @@ def test_incoming_request_cancellation():
         # Simple request.
         rpc.add_request(RPCRequest('sleep', None, 0))
         rpc.yield_to_loop()
-        rpc.work_queue.cancel_all()
+        rpc.task_set.cancel_all()
         rpc.yield_to_loop()
         assert not rpc.responses
         assert rpc.all_done()
@@ -1118,8 +1123,8 @@ def test_incoming_batch_request_cancellation():
         ]))
 
         rpc.yield_to_loop()
-        assert len(rpc.work_queue.tasks) == 1
-        rpc.work_queue.cancel_all()
+        assert len(rpc.task_set.tasks) == 1
+        rpc.task_set.cancel_all()
         rpc.yield_to_loop()
         assert not rpc.responses
         assert rpc.all_done()
@@ -1332,7 +1337,7 @@ def test_max_response_size_for_batch():
             RPCRequest('echo', ['a' * rpc.max_response_size], 1),
             RPCRequest('sleep', None, 2),
         ]))
-        tasks = list(rpc.work_queue.tasks)
+        tasks = list(rpc.task_set.tasks)
         rpc.expect_error(rpc.protocol.INVALID_REQUEST, "response too large",
                          None)
         rpc.yield_to_loop()  # Allow the sleep to cancel

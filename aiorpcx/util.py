@@ -76,37 +76,50 @@ def signature_info(func):
     return SignatureInfo(min_args, max_args, required_names, other_names)
 
 
-class WorkQueue(object):
+class TaskSet(object):
 
-    def __init__(self, *, loop=None, max_concurrent=16):
-        self._require_non_negative(max_concurrent)
-        if loop is None:
-            loop = asyncio.get_event_loop()
-        self.loop = loop
-        self._max_concurrent = max_concurrent
+    def __init__(self, *, loop=None):
+        self.loop = loop or asyncio.get_event_loop()
         self.tasks = set()
-        self.semaphore = asyncio.Semaphore(max_concurrent, loop=loop)
+
+    def cancel_all(self):
+        '''Cancel all uncompleted tasks.'''
+        for task in self:
+            task.cancel()
+
+    def create_task(self, coro):
+        '''Add a task to the run queue.
+
+        coro - a coroutine object
+        '''
+        task = self.loop.create_task(coro)
+        task.add_done_callback(self.tasks.remove)
+        self.tasks.add(task)
+        return task
+
+    def __len__(self):
+        return len(self.tasks)
+
+    def __iter__(self):
+        return iter(self.tasks)
+
+
+class Concurrency(object):
+
+    def __init__(self, max_concurrent):
+        self._require_non_negative(max_concurrent)
+        self._max_concurrent = max_concurrent
+        self.semaphore = asyncio.Semaphore(max_concurrent)
 
     def _require_non_negative(self, value):
         if not isinstance(value, int) or value < 0:
-            raise RuntimeError('max_concurrent must be a natural number')
+            raise RuntimeError('concurrency must be a natural number')
 
-    async def _acquire_count(self, count):
-        for _ in range(count):
-            await self.semaphore.acquire()
-
-    async def _acquire_and_run(self, coro):
-        '''Run coro after acquiriing the semaphore.'''
-        async with self.semaphore:
-            return await coro
-
-    # Public API
     @property
     def max_concurrent(self):
         return self._max_concurrent
 
-    @max_concurrent.setter
-    def max_concurrent(self, value):
+    async def set_max_concurrent(self, value):
         self._require_non_negative(value)
         diff = value - self._max_concurrent
         self._max_concurrent = value
@@ -114,28 +127,8 @@ class WorkQueue(object):
             for _ in range(diff):
                 self.semaphore.release()
         else:
-            task = self.loop.create_task(self._acquire_count(-diff))
-            task.add_done_callback(self.tasks.remove)
-            self.tasks.add(task)
-
-    def cancel_all(self):
-        '''Cancel all uncompleted tasks.'''
-        for task in self.tasks:
-            task.cancel()
-
-    def create_task(self, coro, block=True):
-        '''Add a task to the run queue.
-
-        coro - a coroutine object
-        block - if true, counts against concurrency total
-        '''
-        if block:
-            coro = self._acquire_and_run(coro)
-        task = self.loop.create_task(coro)
-        task.block = block
-        task.add_done_callback(self.tasks.remove)
-        self.tasks.add(task)
-        return task
+            for _ in range(-diff):
+                await self.semaphore.acquire()
 
 
 class Timeout(object):

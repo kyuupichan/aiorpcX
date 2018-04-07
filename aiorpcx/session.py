@@ -36,12 +36,12 @@ from .framing import NewlineFramer
 from .jsonrpc import JSONRPCv2
 from .rpc import (RPCProcessor, RPCRequest, RPCRequestOut,
                   RPCBatchOut, RPCHelperBase)
-from .util import WorkQueue
+from .util import TaskSet, Concurrency
 
 
 class SessionBase(asyncio.Protocol, RPCHelperBase):
 
-    concurrency_interval = 5
+    concurrency_recalc_interval = 15
     max_errors = 10
 
     def __init__(self, rpc_protocol=None, framer=None, loop=None):
@@ -52,7 +52,7 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         self.framer = framer or self.default_framer()
         self.transport = None
         # Concurrency
-        self.max_concurrent = 10
+        self.max_concurrent = 6
         # Set when a connection is made
         self._address = None
         # For logger.debug messsages
@@ -75,6 +75,12 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         self.bw_limit = 2000000
         self.bw_time = self.start_time
         self.bw_charge = 0
+        # Asyncronous tasks
+        self.tasks = TaskSet()
+        self.concurrency = Concurrency(self.max_concurrent)
+
+    def semaphore(self):
+        return self.concurrency.semaphore
 
     def using_bandwidth(self, size):
         '''Called when sending or receiving size bytes.'''
@@ -83,10 +89,10 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
     async def _concurrency_loop(self):
         '''Reclaculate concurrency setting at regular intervals.'''
         while True:
-            self._update_concurrency()
-            await asyncio.sleep(self.concurrency_interval)
+            await self._update_concurrency()
+            await asyncio.sleep(self.concurrency_recalc_interval)
 
-    def _update_concurrency(self):
+    async def _update_concurrency(self):
         now = time.time()
         # Reduce the recorded usage in proportion to the elapsed time
         refund = (now - self.bw_time) * (self.bw_limit / 3600)
@@ -95,11 +101,11 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         # Reduce concurrency allocation by 1 for each whole bw_limit used
         throttle = int(self.bw_charge / self.bw_limit)
         target = max(1, self.max_concurrent - throttle)
-        current = self.work_queue.max_concurrent
+        current = self.concurrency.max_concurrent
         if target != current:
             self.logger.info(f'changing task concurrency from {current} '
                              f'to {target}')
-            self.work_queue.max_concurrent = target
+            await self.concurrency.set_max_concurrent(target)
 
     def data_received(self, framed_message):
         '''Called by asyncio when a message comes in.'''
@@ -184,7 +190,7 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         return NewlineFramer()
 
     def create_task(self, coro):
-        return self.work_queue.create_task(coro)
+        return self.tasks.create_task(coro)
 
     def connection_made(self, transport):
         '''Called by asyncio when a connection is established.
@@ -194,9 +200,7 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         # This would throw if called on a closed SSL transport.  Fixed
         # in asyncio in Python 3.6.1 and 3.5.4
         self._address = transport.get_extra_info('peername')
-        self.work_queue = WorkQueue(loop=self.loop,
-                                    max_concurrent=self.max_concurrent)
-        self.work_queue.create_task(self._concurrency_loop(), block=False)
+        self.tasks.create_task(self._concurrency_loop())
 
     def connection_lost(self, exc):
         '''Called by asyncio when the connection closes.
@@ -204,7 +208,7 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         Tear down things done in connection_made.'''
         self._address = None
         self.transport = None
-        self.work_queue.cancel_all()
+        self.tasks.cancel_all()
         for request in self.all_requests():
             request.cancel()
 
