@@ -13,10 +13,10 @@
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
 
-# import os
-# import sys
-# sys.path.insert(0, os.path.abspath('..'))
-# import aiorpcx
+import os
+import sys
+sys.path.insert(0, os.path.abspath('..'))
+import aiorpcx
 
 
 # -- Project information -----------------------------------------------------
@@ -26,7 +26,7 @@ copyright = '2018, Neil Booth'
 author = 'Neil Booth'
 
 # The short X.Y version
-version = '0.5.2'
+version = aiorpcx._version_str
 # The full version, including alpha/beta/rc tags
 release = version
 
