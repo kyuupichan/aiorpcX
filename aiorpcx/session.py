@@ -214,6 +214,11 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
             request.cancel()
 
     # App layer
+    async def wait_closed(self):
+        '''Returns when all pending tasks and requests have completed.'''
+        await self.tasks.wait()
+        await asyncio.gather(*self.all_requests(), return_exceptions=True)
+
     def is_closing(self):
         '''Return True if the connection is closing.'''
         return not self.transport or self.transport.is_closing()
@@ -336,11 +341,14 @@ class Server(object):
         self.server = await self.loop.create_server(
             self._session_factory, self.host, self.port, **self._kwargs)
 
-    async def close(self):
+    async def wait_closed(self):
+        if self.server:
+            await self.server.wait_closed()
+            self.server = None
+
+    def close(self):
         '''Close the listening socket.  This does not close any ServerSession
         objects created to handle incoming connections.
         '''
         if self.server:
             self.server.close()
-            await self.server.wait_closed()
-            self.server = None

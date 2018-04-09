@@ -60,6 +60,10 @@ A simple wrapper around an :class:`asyncio.Server` object (see
     This does nothing to protocols and transports handling existing
     connections.  On return :attr:`server` is :const:`None`.
 
+  .. method:: wait_closed()
+
+    Returns when the server has closed.
+
     This method is a `coroutine`_.
 
 Sessions

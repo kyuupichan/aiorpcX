@@ -19,6 +19,8 @@ SOCKS proxy client.
 
 The current version is |release|.
 
+The library API is not stable and may change radically.
+
 Source Code
 ===========
 

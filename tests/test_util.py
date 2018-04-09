@@ -131,6 +131,10 @@ def test_task_set():
     tasks = TaskSet()
     loop = tasks.loop
 
+    # Test with empty tasks
+    assert not tasks
+    loop.run_until_complete(tasks.wait())
+
     fut = loop.create_future()
     async def work():
         await fut
@@ -143,7 +147,8 @@ def test_task_set():
 
     assert len(tasks) == count
     tasks.cancel_all()
-    run_briefly(loop)
+
+    loop.run_until_complete(tasks.wait())
 
     assert all(task.cancelled() for task in my_tasks)
     assert not tasks

@@ -21,6 +21,8 @@ class MyServerSession(aiorpcx.ServerSession):
 
 async def main():
     server = aiorpcx.Server(MyServerSession, 'localhost', 8888)
+    # Serve for 60 seconds
+    server.loop.call_later(60, server.close)
     try:
         await server.listen()
         await server.wait_closed()

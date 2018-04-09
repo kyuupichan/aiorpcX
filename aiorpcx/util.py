@@ -23,7 +23,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-__all__ = ()
+__all__ = ('TaskSet', )
 
 import asyncio
 from collections import namedtuple
@@ -96,6 +96,11 @@ class TaskSet(object):
         task.add_done_callback(self.tasks.remove)
         self.tasks.add(task)
         return task
+
+    async def wait(self):
+        '''Returns when all tasks have completed.'''
+        if self.tasks:
+            await asyncio.wait(self.tasks)
 
     def __len__(self):
         return len(self.tasks)
