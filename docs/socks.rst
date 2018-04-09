@@ -129,17 +129,21 @@ of its auto-detection class methods is likely more useful.
               flags=0, timeout=30.0)
 
      Connect to (host, port) through the proxy in the background.
-     When successful, the coroutine returns a ``(transport,
-     protocol)`` pair and sets the proxy attributes :attr:`host`,
-     :attr:`port` and :attr:`peername`.
+     When successful, the coroutine returns a ``(transport, protocol,
+     address)`` triple, and sets the proxy attribute :attr:`peername`.
 
      * If *resolve* is :const:`True`, *host* is resolved locally
        rather than by the proxy.  *family*, *proto*, *flags* are the
-       optional address family, protocol and flags to be passed
-       through to `loop.getaddrinfo()`_.  If given, these should all be
-       integers from the corresponding :mod:`socket` module constants.
+       optional address family, protocol and flags passed to
+       `loop.getaddrinfo()`_ to get a list of remote addresses.  If
+       given, these should all be integers from the corresponding
+       :mod:`socket` module constants.
 
      * *ssl* is as documented for `loop.create_connection()`_.
+
+     If successfully connected the :attr:`_address` member of the
+     protocol is set.  If *resolve* is :const:`True` it is set to the
+     successful address, otherwise ``(host, port)``.
 
      If connecting takes more than *timeout* seconds an
      :exc:`asyncio.TimeoutError` exception is raised.

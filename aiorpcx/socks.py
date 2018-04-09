@@ -244,11 +244,8 @@ class SOCKSProxy(object):
         self.address = address
         self.protocol = protocol
         self.auth = auth
-        # These three are set on a successful handshake with the proxy
-        # requesting a connection to (host, port).  peername is the
-        # proxy peername, from socket.getpeername()
-        self.host = None
-        self.port = None
+        # Set on each successful connection via the proxy to the
+        # result of socket.getpeername()
         self.peername = None
 
     def __str__(self):
@@ -268,27 +265,26 @@ class SOCKSProxy(object):
                 await t.run(loop.sock_connect(sock, self.address))
                 await t.run(self.protocol.handshake(sock, host, port,
                                                     self.auth, loop))
-            self.host = host
-            self.port = port
             self.peername = sock.getpeername()
             return sock
         except Exception as e:
             sock.close()
             return e
 
-    async def _connect(self, hosts, port, loop, timeout):
-        '''Connect to the proxy and perform a handshake requesting it proxy
-        a connection to (host, port) for each host in hosts.
+    async def _connect(self, addresses, loop, timeout):
+        '''Connect to the proxy and perform a handshake requesting a
+        connection to each address in addresses.
 
-        Return the open socket on success.
+        Return an (open_socket, address) pair on success.
         '''
-        assert len(hosts) > 0
+        assert len(addresses) > 0
 
         exceptions = []
-        for host in hosts:
+        for address in addresses:
+            host, port = address[:2]
             sock = await self._connect_one(host, port, loop, timeout)
             if isinstance(sock, socket.socket):
-                return sock
+                return sock, address
             exceptions.append(sock)
 
         strings = set(str(exc) for exc in exceptions)
@@ -366,20 +362,27 @@ class SOCKSProxy(object):
         is asked to resolve host.
 
         The function signature is similar to loop.create_connection()
-        and the result is the same.  Additionally raises SOCKSError if
-        something goes wrong with the proxy handshake.
+        with the same result.  The attribute _address is set on the
+        protocol to the address of the successful remote connection.
+        Additionally raises SOCKSError if something goes wrong with
+        the proxy handshake.
         '''
         loop = loop or asyncio.get_event_loop()
         if resolve:
             infos = await loop.getaddrinfo(host, port, family=family,
                                            type=socket.SOCK_STREAM,
                                            proto=proto, flags=flags)
-            hosts = [info[4][0] for info in infos]
+            addresses = [info[4] for info in infos]
         else:
-            hosts = [host]
+            addresses = [(host, port)]
 
-        sock = await self._connect(hosts, port, loop, timeout)
+        sock, address = await self._connect(addresses, loop, timeout)
+
+        def set_address():
+            protocol = protocol_factory()
+            protocol._address = address
+            return protocol
 
         return await loop.create_connection(
-            protocol_factory, sock=sock, ssl=ssl,
+            set_address, sock=sock, ssl=ssl,
             server_hostname=host if ssl else None)

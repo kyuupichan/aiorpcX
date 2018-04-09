@@ -33,10 +33,6 @@ my_server = None
 my_server_set = asyncio.Event()
 
 
-class MyProtocol(asyncio.Protocol):
-    pass
-
-
 class FakeServer(asyncio.Protocol):
 
     def __init__(self, cs):
@@ -733,38 +729,38 @@ class TestSOCKSProxy(object):
     def test_create_connection_timeout(self, sleeper_address, auth):
         loop = asyncio.get_event_loop()
         proxy = SOCKSProxy(sleeper_address, SOCKS5, auth)
-        coro = proxy.create_connection(MyProtocol, *GCOM, timeout=0.01)
+        coro = proxy.create_connection(ClientSession, *GCOM, timeout=0.01)
         with pytest.raises(asyncio.TimeoutError):
             loop.run_until_complete(coro)
 
     def test_create_connection_good(self, SOCKS5_address, auth):
         loop = asyncio.get_event_loop()
         proxy = SOCKSProxy(SOCKS5_address, SOCKS5, auth)
-        coro = proxy.create_connection(MyProtocol, *GCOM, loop=loop,
+        coro = proxy.create_connection(ClientSession, *GCOM, loop=loop,
                                        timeout=0.05)
         transport, protocol = loop.run_until_complete(coro)
-        assert proxy.host == GCOM[0]
-        assert proxy.port == GCOM[1]
+        assert protocol._address == (GCOM[0], GCOM[1])
+        assert protocol._proxy_address == proxy.peername
         assert proxy.peername == ('127.0.0.1', SOCKS5_address[1])
-        assert isinstance(protocol, MyProtocol)
+        assert isinstance(protocol, ClientSession)
         transport.close()
 
     def test_create_connection_resolve_good(self, SOCKS5_address, auth):
         loop = asyncio.get_event_loop()
         proxy = SOCKSProxy(('localhost', SOCKS5_address[1]), SOCKS5, auth)
         loop = asyncio.get_event_loop()
-        coro = proxy.create_connection(MyProtocol, *GCOM, resolve=True)
+        coro = proxy.create_connection(ClientSession, *GCOM, resolve=True)
         transport, protocol = loop.run_until_complete(coro)
-        assert proxy.host not in (None, GCOM[0])
-        assert proxy.port == GCOM[1]
+        assert protocol._address[0] not in (None, GCOM[0])
+        assert protocol._address[1] == GCOM[1]
         assert proxy.peername == ('127.0.0.1', SOCKS5_address[1])
-        assert isinstance(protocol, MyProtocol)
+        assert isinstance(protocol, ClientSession)
         transport.close()
 
     def test_create_connection_resolve_bad(self, SOCKS5_address, auth):
         proxy = SOCKSProxy(('localhost', SOCKS5_address[1]), SOCKS5, auth)
         loop = asyncio.get_event_loop()
-        coro = proxy.create_connection(MyProtocol, 'foobar.onion', 80,
+        coro = proxy.create_connection(ClientSession, 'foobar.onion', 80,
                                        resolve=True)
         with pytest.raises(OSError):
             loop.run_until_complete(coro)

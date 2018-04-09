@@ -55,6 +55,7 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         self.max_concurrent = 6
         # Set when a connection is made
         self._address = None
+        self._proxy_address = None
         # For logger.debug messsages
         self.verbosity = 0
         # Pausing sends when socket is full
@@ -200,7 +201,13 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         self.transport = transport
         # This would throw if called on a closed SSL transport.  Fixed
         # in asyncio in Python 3.6.1 and 3.5.4
-        self._address = transport.get_extra_info('peername')
+        peer_address = transport.get_extra_info('peername')
+        # If the Socks proxy was used then _address is already set to
+        # the remote address
+        if self._address:
+            self._proxy_address = peer_address
+        else:
+            self._address = peer_address
         self.tasks.create_task(self._concurrency_loop())
 
     def connection_lost(self, exc):
