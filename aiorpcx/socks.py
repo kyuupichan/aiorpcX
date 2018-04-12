@@ -214,8 +214,8 @@ class SOCKS5(SOCKSBase):
 
         # Get response
         data = await cls.sock_recv(loop, socket, 5)
-        if (len(data) != 5 or data[0] != 5 or data[2] != 0
-                or data[3] not in (1, 3, 4)):
+        if (len(data) != 5 or data[0] != 5 or data[2] != 0 or
+                data[3] not in (1, 3, 4)):
             raise SOCKSProtocolError(f'invalid SOCKS5 proxy response: {data}')
         if data[1] != 0:
             raise SOCKSFailure(cls.ERROR_CODES.get(

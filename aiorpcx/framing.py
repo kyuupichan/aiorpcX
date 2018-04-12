@@ -57,7 +57,7 @@ class FramerBase(object):
 class NewlineFramer(FramerBase):
     '''A framer for a protocol where messages are separated by newlines.'''
 
-    def __init__(self, max_size=250*4000):
+    def __init__(self, max_size=250 * 4000):
         '''max_size - an anti-DoS measure.  If, after processing an incoming
         message, buffered data would exceed max_size bytes, that
         buffered data is dropped entirely and the framer waits for a

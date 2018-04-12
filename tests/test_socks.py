@@ -85,8 +85,8 @@ class FakeServer(asyncio.Protocol):
         result = self.consume_SOCKS4(a)
         if result:
             first = random.randrange(1, 256)
-            self.transport.write(bytes([first])
-                                 + self.SOCKS4_good_bytes()[1:])
+            self.transport.write(bytes([first]) +
+                                 self.SOCKS4_good_bytes()[1:])
 
     def SOCKS4_fail(self, code, a=False):
         result = self.consume_SOCKS4(a)
@@ -425,10 +425,10 @@ class TestSOCKS5(object):
         else:
             received.append(bytes([5, 1, 0]))
         if chosen_auth == 2:
-            received.append(bytes([1, len(auth.username)])
-                            + auth.username.encode()
-                            + bytes([len(auth.password)])
-                            + auth.password.encode())
+            received.append(bytes([1, len(auth.username)]) +
+                            auth.username.encode() +
+                            bytes([len(auth.password)]) +
+                            auth.password.encode())
 
         req = bytearray([5, 1, 0])
         if isinstance(host, ipaddress.IPv4Address):

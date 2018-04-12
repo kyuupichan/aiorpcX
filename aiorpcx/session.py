@@ -310,7 +310,8 @@ class ClientSession(SessionBase):
 
     async def create_connection(self):
         '''Initiate a connection.'''
-        self_func = lambda: self
+        def self_func():
+            return self
         if self.proxy:
             return await self.proxy.create_connection(
                 self_func, self.host, self.port, loop=self.loop, **self.kwargs)

@@ -487,8 +487,8 @@ def test_batch_message_from_parts():
         assert rpc.batch_message_from_parts([b'1']) == b'[1]'
         assert rpc.batch_message_from_parts([b'1', b'2']) == b'[1, 2]'
         # An empty part is not valid, but anyway.
-        assert (rpc.batch_message_from_parts([b'1', b'', b'[3]'])
-                == b'[1, , [3]]')
+        assert (rpc.batch_message_from_parts([b'1', b'', b'[3]']) ==
+                b'[1, , [3]]')
 
 
 def test_built_in_errors():
@@ -561,9 +561,10 @@ def test_JSONRPCv2_and_JSONRPCLoosemessages():
         (RPCBatch([
             RPCRequest('foo', [], 2),
             RPCRequest('bar', [2], None)
+        ]), [
+            {"jsonrpc": "2.0", "method": "foo", "id": 2},
+            {"jsonrpc": "2.0", "method": "bar", "params": [2]}
         ]),
-         [{"jsonrpc": "2.0", "method": "foo", "id": 2},
-          {"jsonrpc": "2.0", "method": "bar", "params": [2]}]),
     ]
 
     for rpc in [JSONRPCv2, JSONRPCLoose]:

@@ -59,12 +59,14 @@ def test_function_info():
     assert signature_info(f7) == SignatureInfo(1, None, ['x'], any)
     assert signature_info(f8) == SignatureInfo(2, 3, [], None)
 
+
 def run_briefly(loop):
     async def once():
         pass
     gen = once()
     t = loop.create_task(gen)
     loop.run_until_complete(t)
+
 
 def test_concurrency_constructor():
     Concurrency(3)
@@ -81,6 +83,7 @@ async def concurrency_max(c):
 
     loop = asyncio.get_event_loop()
     fut = loop.create_future()
+
     async def work():
         async with c.semaphore:
             q.append(None)
@@ -135,10 +138,10 @@ def test_task_set():
     assert not tasks
     loop.run_until_complete(tasks.wait())
 
-    fut = loop.create_future()
     async def work():
         await fut
 
+    fut = loop.create_future()
     count = 3
     my_tasks = []
     for _ in range(count):

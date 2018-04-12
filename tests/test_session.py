@@ -115,6 +115,7 @@ class TestClientSession:
     @pytest.mark.asyncio
     async def test_send_request(self, server):
         called = set()
+
         def on_done(task):
             assert task.result() == 23
             called.add(True)
@@ -163,7 +164,7 @@ class TestClientSession:
             assert isinstance(req1, RPCRequestOut)
             assert isinstance(req2, RPCRequest)
             assert isinstance(req3, RPCRequestOut)
-            assert await batch == False   # No meaningful result of a batch
+            assert await batch is False   # No meaningful result of a batch
             assert await req1 == 'a'
             assert await req3 == 'b'
         assert MyServerSession.current_server.notifications == ['item']
@@ -171,6 +172,7 @@ class TestClientSession:
     @pytest.mark.asyncio
     async def test_send_batch_timeout(self, server):
         called = set()
+
         def on_done(task):
             assert isinstance(task.exception(), asyncio.TimeoutError)
             called.add(True)
@@ -189,6 +191,7 @@ class TestClientSession:
             return value * 2
 
         called = set()
+
         def on_done(task):
             assert task.result() == 12
             called.add(True)
@@ -276,7 +279,7 @@ class TestClientSession:
         try:
             client = ClientSession('localhost', 0)
             await client.connect()
-        except:
+        except Exception:
             pass
         assert asyncio.Task.all_tasks(loop) == tasks
 
@@ -290,6 +293,7 @@ class TestClientSession:
     async def test_pausing(self, server):
         called = []
         limit = None
+
         def my_write(data):
             called.append(data)
             if len(called) == limit:

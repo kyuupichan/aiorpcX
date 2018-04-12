@@ -8,6 +8,9 @@ install:
   - pip install pytest-asyncio
   - pip install pytest-cov
   - pip install python-coveralls
+  - pip install pycodestyle
 # command to run tests
-script: pytest --cov=aiorpcx
+script:
+  - pytest --cov=aiorpcx
+  - pycodestyle --exclude=conf.py .
 after_success: coveralls

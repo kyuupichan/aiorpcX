@@ -2,6 +2,7 @@ import asyncio
 import aiorpcx
 import logging
 
+
 async def main():
     async with aiorpcx.ClientSession('localhost', 8888) as session:
         session.send_request('echo', ["Howdy"])

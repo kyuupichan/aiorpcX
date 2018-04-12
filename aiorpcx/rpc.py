@@ -149,8 +149,8 @@ class RPCBatch(object):
         self.items = items
         assert isinstance(items, list)
         assert items
-        assert (all(isinstance(item, RPCRequest) for item in items)
-                or all(isinstance(item, RPCResponse) for item in items))
+        assert (all(isinstance(item, RPCRequest) for item in items) or
+                all(isinstance(item, RPCResponse) for item in items))
 
     def requests(self):
         '''An iterable of the batch items that are not notifications.

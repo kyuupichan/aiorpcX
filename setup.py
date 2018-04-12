@@ -13,8 +13,8 @@ setuptools.setup(
     author_email='kyuupichan@gmail.com',
     license='MIT Licence',
     url='https://github.com/kyuupichan/aiorpcX',
-    download_url = ('https://github.com/kyuupichan/aiorpcX/archive/'
-                    f'{version}.tar.gz'),
+    download_url=('https://github.com/kyuupichan/aiorpcX/archive/'
+                  f'{version}.tar.gz'),
     long_description=(
         'Transport, protocol and framing-independent async RPC '
         'client and server implementation.  '
