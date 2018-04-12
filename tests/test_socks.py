@@ -1,4 +1,7 @@
 import asyncio
+#import uvloop
+#asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+
 import collections
 from functools import partial
 import ipaddress
@@ -176,29 +179,29 @@ def server_address(cs, port):
     server.close()
 
 
-@pytest.fixture(scope="module")
-def SOCKS4_address():
-    yield from server_address('SOCKS4', 8484)
+@pytest.fixture(scope="function")
+def SOCKS4_address(unused_tcp_port):
+    yield from server_address('SOCKS4', unused_tcp_port)
 
 
-@pytest.fixture(scope="module")
-def SOCKS4a_address():
-    yield from server_address('SOCKS4a', 8485)
+@pytest.fixture(scope="function")
+def SOCKS4a_address(unused_tcp_port):
+    yield from server_address('SOCKS4a', unused_tcp_port)
 
 
-@pytest.fixture(scope="module")
-def SOCKS5_address():
-    yield from server_address('SOCKS5', 8486)
+@pytest.fixture(scope="function")
+def SOCKS5_address(unused_tcp_port):
+    yield from server_address('SOCKS5', unused_tcp_port)
 
 
-@pytest.fixture(scope="module")
-def sleeper_address():
-    yield from server_address('sleep', 8487)
+@pytest.fixture(scope="function")
+def sleeper_address(unused_tcp_port):
+    yield from server_address('sleep', unused_tcp_port)
 
 
-@pytest.fixture(scope="module")
-def fail_address():
-    yield from server_address('SOCKS4_fail', 8488)
+@pytest.fixture(scope="function")
+def fail_address(unused_tcp_port):
+    yield from server_address('SOCKS4_fail', unused_tcp_port)
 
 
 def lss(address):

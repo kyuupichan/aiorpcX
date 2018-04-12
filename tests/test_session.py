@@ -8,6 +8,10 @@ from aiorpcx import *
 from aiorpcx.rpc import RPCRequest, RPCRequestOut
 
 
+# import uvloop
+# asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+
+
 class MyServerSession(ServerSession):
 
     current_server = None
@@ -286,7 +290,7 @@ class TestClientSession:
         async with ClientSession('localhost', server.port) as client:
             pass
 
-        await asyncio.sleep(0.004)
+        await asyncio.sleep(0.001)  # Yield to event loop for processing
         assert asyncio.Task.all_tasks(loop) == tasks
 
     @pytest.mark.asyncio
@@ -300,7 +304,10 @@ class TestClientSession:
                 client.pause_writing()
 
         async with ClientSession('localhost', server.port) as client:
-            client.transport.write = my_write
+            try:
+                client.transport.write = my_write
+            except AttributeError:    # uvloop: transport.write is read-only
+                return
             client.send_message(b'a')
             assert called
             called.clear()
