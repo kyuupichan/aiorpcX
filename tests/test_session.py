@@ -217,7 +217,8 @@ class TestClientSession:
         async with ClientSession('localhost', server.port) as client:
             request = client.send_request('ping', [23])
         await asyncio.sleep(0)  # Yield to event loop for processing
-        assert request.cancelled()
+        with pytest.raises(ConnectionError):
+            request.result()
 
     @pytest.mark.asyncio
     async def test_logging(self, server):

@@ -49,6 +49,7 @@ Documentation
 
 .. toctree::
 
+   changelog
    framing
    json-rpc
    rpc

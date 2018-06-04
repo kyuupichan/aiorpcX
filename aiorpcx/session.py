@@ -24,7 +24,7 @@
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
-__all__ = ('ClientSession', 'ServerSession', 'Server')
+__all__ = ('ClientSession', 'ServerSession', 'Server', 'ConnectionError')
 
 
 import asyncio
@@ -37,6 +37,10 @@ from .jsonrpc import JSONRPCv2
 from .rpc import (RPCProcessor, RPCRequest, RPCRequestOut,
                   RPCBatchOut, RPCHelperBase)
 from .util import TaskSet, Concurrency
+
+
+class ConnectionError(RuntimeError):
+    pass
 
 
 class SessionBase(asyncio.Protocol, RPCHelperBase):
@@ -218,7 +222,8 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         self.transport = None
         self.tasks.cancel_all()
         for request in self.all_requests():
-            request.cancel()
+            request.set_exception(ConnectionError(
+                'connection lost before request completed'))
 
     # App layer
     async def wait_closed(self):

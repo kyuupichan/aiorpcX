@@ -1,5 +1,14 @@
 .. currentmodule:: aiorpcx
 
+Exceptions
+----------
+
+.. exception:: ConnectionError
+
+   When a connection is lost that has pending requests, this exception is set on
+   those requests.
+
+
 Server
 ======
 
