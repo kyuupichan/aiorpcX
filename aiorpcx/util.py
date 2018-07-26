@@ -25,10 +25,19 @@
 
 __all__ = ('TaskSet', )
 
+
 import asyncio
 from collections import namedtuple
 from functools import partial
 import inspect
+
+
+def normalize_corofunc(corofunc, args):
+    if asyncio.iscoroutine(corofunc):
+        if args != ():
+            raise ValueError('args cannot be passed with a coroutine')
+        return corofunc
+    return corofunc(*args)
 
 
 def is_async_call(func):

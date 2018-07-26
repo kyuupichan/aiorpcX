@@ -2,6 +2,9 @@ dist: trusty
 language: python
 python:
   - "3.6"
+  - "3.6-dev"
+#  - "3.7-dev"
+#  - "nightly"
 # command to install dependencies
 install:
   - pip install -e .
