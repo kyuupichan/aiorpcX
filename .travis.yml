@@ -12,8 +12,10 @@ install:
   - pip install pytest-cov
   - pip install python-coveralls
   - pip install pycodestyle
+  - pip install Sphinx
 # command to run tests
 script:
   - pytest --cov=aiorpcx
-  - pycodestyle --exclude=conf.py aiorpcx docs
+  - pycodestyle aiorpcx/*.py
+  - sh -c "cd docs && make html"
 after_success: coveralls
