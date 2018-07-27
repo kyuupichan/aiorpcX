@@ -108,9 +108,7 @@ async def test_tg_cancel_remaining():
 async def test_tg_aiter():
     tasks = [await spawn(sleep, x/200) for x in range(5, 0, -1)]
     t = TaskGroup(tasks)
-    result = []
-    async for task in t:
-        result.append(task)
+    result = [task async for task in t]
     assert result == list(reversed(tasks))
 
 
@@ -375,6 +373,10 @@ async def test_timeout_after_coro_callstyles():
     assert await timeout_after(0.01, t1(2, 8)) == 11
     assert await timeout_after(0.01, t1, 2, 8) == 11
 
+    coro = t1()
+    with pytest.raises(ValueError):
+        await timeout_after(0, coro, 1)
+    await coro
 
 @pytest.mark.asyncio
 async def test_timeout_after_zero():
@@ -405,14 +407,14 @@ async def test_nested_after_no_expire_nested():
         pass
 
     async def child():
-        await timeout_after(0.01, coro1())
+        await timeout_after(0.001, coro1())
 
     async def parent():
-        await timeout_after(0.03, child())
+        await timeout_after(0.003, child())
 
     await parent()
     try:
-        await sleep(0.05)
+        await sleep(0.005)
     except CancelledError:
         assert False
 
@@ -423,12 +425,12 @@ async def test_nested_after_no_expire_nested2():
         pass
 
     async def child():
-        await timeout_after(0.01, coro1())
-        await sleep(0.05)
+        await timeout_after(0.001, coro1())
+        await sleep(0.005)
 
     async def parent():
         try:
-            await timeout_after(0.03, child())
+            await timeout_after(0.003, child())
         except TaskTimeout:
             return
         assert False
@@ -748,7 +750,7 @@ async def test_ignore_after_no_expire():
         assert await ignore_after(0.002, t1, 1) == 2
     except:
         assert False
-    await sleep(0.02)
+    await sleep(0.002)
     assert True
 
 
@@ -1366,7 +1368,7 @@ async def test_task_group_cancel_remaining():
 
 
 @pytest.mark.asyncio
-async def tst_task_group_use_error():
+async def test_task_group_use_error():
     async def main():
          async with TaskGroup() as g:
               t1 = await g.spawn(sleep, 0)
@@ -1379,6 +1381,6 @@ async def tst_task_group_use_error():
          t2 = await spawn(sleep, 0)
          with pytest.raises(RuntimeError):
              await g.add_task(t2)
-         await t2.join()
+         await t2
 
     await main()
