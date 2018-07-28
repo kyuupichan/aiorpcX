@@ -73,8 +73,8 @@ class TaskGroupError(Exception):
         self.errors = {type(task.exception()) for task in failed}
 
     def __str__(self):
-        return 'TaskGroupError(%s)'.format(', '.join(
-            err.__name__ for err in self.errors))
+        errors = ', '.join(err.__name__ for err in self.errors)
+        return f'TaskGroupError({errors})'
 
     def __iter__(self):
         return self.failed.__iter__()

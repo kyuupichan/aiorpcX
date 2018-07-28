@@ -85,6 +85,20 @@ async def test_next_result():
 
 
 @pytest.mark.asyncio
+async def test_tg_str():
+    try:
+        async with TaskGroup() as t:
+            await t.spawn(raises(ValueError))
+            await t.spawn(raises(IndexError))
+    except TaskGroupError as e:
+        assert str(e) in (
+            'TaskGroupError(ValueError, IndexError)',
+            'TaskGroupError(IndexError, ValueError)'
+        )
+        return
+    assert False
+
+@pytest.mark.asyncio
 async def test_tg_spawn():
     t = TaskGroup()
     task = await t.spawn(sleep, 0.01)
