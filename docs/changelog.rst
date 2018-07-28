@@ -3,6 +3,11 @@ ChangeLog
 
 .. note:: The aiorpcX API will change quite a bit for version 0.6
 
+Version 0.5.8 (28 Jul 2018)
+---------------------------
+
+* Fix __str__ in TaskGroupError
+
 Version 0.5.7 (27 Jul 2018)
 ---------------------------
 
