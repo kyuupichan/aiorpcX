@@ -3,6 +3,11 @@ ChangeLog
 
 .. note:: The aiorpcX API will change quite a bit for version 0.6
 
+Version 0.5.9 (29 Jul 2018)
+---------------------------
+
+* Remove "async" from __aiter__ which apparently breaks Python 3.7
+
 Version 0.5.8 (28 Jul 2018)
 ---------------------------
 
