@@ -37,14 +37,18 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import logging
-from asyncio import CancelledError, get_event_loop, Event, sleep, Task
+from asyncio import (
+    CancelledError, get_event_loop, Queue, Event, sleep, Task
+)
 from collections import deque
+from functools import partial
 
-from aiorpcx.util import normalize_corofunc
+from aiorpcx.util import normalize_corofunc, check_task
 
 
 __all__ = (
-    'run_in_thread', 'spawn',
+    'Queue', 'Event', 'sleep', 'CancelledError',
+    'run_in_thread', 'spawn', 'spawn_sync',
     'TaskGroupError', 'TaskGroup',
     'TaskTimeout', 'TimeoutCancellationError', 'UncaughtTimeoutError',
     'timeout_after', 'timeout_at', 'ignore_after', 'ignore_at',
@@ -56,9 +60,17 @@ async def run_in_thread(func, *args):
     return await get_event_loop().run_in_executor(None, func, *args)
 
 
-async def spawn(coro, *args):
+async def spawn(coro, *args, loop=None, report_crash=True):
+    return spawn_sync(coro, *args, loop=loop, report_crash=report_crash)
+
+
+def spawn_sync(coro, *args, loop=None, report_crash=True):
     coro = normalize_corofunc(coro, args)
-    return get_event_loop().create_task(coro)
+    loop = loop or get_event_loop()
+    task = loop.create_task(coro)
+    if report_crash:
+        task.add_done_callback(partial(check_task, logging))
+    return task
 
 
 class TaskGroupError(Exception):
@@ -133,11 +145,8 @@ class TaskGroup(object):
                     pass
                 else:
                     self.completed = task
-        if task._report_crash and not task.cancelled():
-            try:
-                task.result()
-            except Exception as e:
-                self._logger.error('task crashed: %r', task, exc_info=True)
+        if task._report_crash:
+            check_task(self._logger, task)
 
     async def spawn(self, coro, *args, report_crash=True):
         '''Create a new task that’s part of the group. Returns a Task
@@ -145,7 +154,7 @@ class TaskGroup(object):
         is logged when a task exits with an uncaught exception.
         '''
         task = await spawn(coro, *args)
-        await self.add_task(task, report_crash=report_crash)
+        self._add_task(task, report_crash=report_crash)
         return task
 
     async def add_task(self, task, *, report_crash=True):

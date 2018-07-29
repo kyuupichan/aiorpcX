@@ -23,7 +23,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-__all__ = ('TaskSet', )
+__all__ = ()
 
 
 import asyncio
@@ -85,39 +85,6 @@ def signature_info(func):
     return SignatureInfo(min_args, max_args, required_names, other_names)
 
 
-class TaskSet(object):
-
-    def __init__(self, *, loop=None):
-        self.loop = loop or asyncio.get_event_loop()
-        self.tasks = set()
-
-    def cancel_all(self):
-        '''Cancel all uncompleted tasks.'''
-        for task in self:
-            task.cancel()
-
-    def create_task(self, coro):
-        '''Add a task to the run queue.
-
-        coro - a coroutine object
-        '''
-        task = self.loop.create_task(coro)
-        task.add_done_callback(self.tasks.remove)
-        self.tasks.add(task)
-        return task
-
-    async def wait(self):
-        '''Returns when all tasks have completed.'''
-        if self.tasks:
-            await asyncio.wait(self.tasks)
-
-    def __len__(self):
-        return len(self.tasks)
-
-    def __iter__(self):
-        return iter(self.tasks)
-
-
 class Concurrency(object):
 
     def __init__(self, max_concurrent):
@@ -172,3 +139,11 @@ class Timeout(object):
     def _timeout(self):
         self.task.cancel()
         self.timed_out = True
+
+
+def check_task(logger, task):
+    if not task.cancelled():
+        try:
+            task.result()
+        except Exception as e:
+            logger.error('task crashed: %r', task, exc_info=True)

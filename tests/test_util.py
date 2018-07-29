@@ -6,7 +6,7 @@ import time
 import pytest
 
 from aiorpcx.util import (SignatureInfo, signature_info, Concurrency,
-                          Timeout, TaskSet, is_async_call)
+                          Timeout, is_async_call)
 
 
 async def coro(x, y):
@@ -23,49 +23,6 @@ def test_is_async_call():
     assert not is_async_call(partial(is_async_call))
     # Lose a warning
     asyncio.get_event_loop().run_until_complete(z)
-
-
-def test_function_info():
-
-    def f1():
-        pass
-
-    async def f2(x):
-        pass
-
-    def f3(x, y=2):
-        pass
-
-    async def f4(x, y=2, *, z=3):
-        pass
-
-    def f5(x, y=2, *, z=3, **kwargs):
-        pass
-
-    async def f6(x, y=2, *args):
-        pass
-
-    def f7(x, *args, **kwargs):
-        pass
-
-    f8 = pow
-
-    assert signature_info(f1) == SignatureInfo(0, 0, [], [])
-    assert signature_info(f2) == SignatureInfo(1, 1, ['x'], [])
-    assert signature_info(f3) == SignatureInfo(1, 2, ['x'], ['y'])
-    assert signature_info(f4) == SignatureInfo(1, 2, ['x'], ['y', 'z'])
-    assert signature_info(f5) == SignatureInfo(1, 2, ['x'], any)
-    assert signature_info(f6) == SignatureInfo(1, None, ['x'], ['y'])
-    assert signature_info(f7) == SignatureInfo(1, None, ['x'], any)
-    assert signature_info(f8) == SignatureInfo(2, 3, [], None)
-
-
-def run_briefly(loop):
-    async def once():
-        pass
-    gen = once()
-    t = loop.create_task(gen)
-    loop.run_until_complete(t)
 
 
 def test_concurrency_constructor():
@@ -128,33 +85,6 @@ async def test_max_concurrent():
         await c.set_max_concurrent(-1)
     with pytest.raises(RuntimeError):
         await c.set_max_concurrent(2.6)
-
-
-def test_task_set():
-    tasks = TaskSet()
-    loop = tasks.loop
-
-    # Test with empty tasks
-    assert not tasks
-    loop.run_until_complete(tasks.wait())
-
-    async def work():
-        await fut
-
-    fut = loop.create_future()
-    count = 3
-    my_tasks = []
-    for _ in range(count):
-        my_tasks.append(tasks.create_task(work()))
-    run_briefly(loop)
-
-    assert len(tasks) == count
-    tasks.cancel_all()
-
-    loop.run_until_complete(tasks.wait())
-
-    assert all(task.cancelled() for task in my_tasks)
-    assert not tasks
 
 
 def test_timeout():

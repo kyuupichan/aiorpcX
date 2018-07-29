@@ -24,36 +24,30 @@
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
-__all__ = ('ClientSession', 'ServerSession', 'Server', 'ConnectionError')
+__all__ = ('ClientSession', 'ServerSession', 'Server')
 
 
 import asyncio
+import itertools
 import logging
-import ssl
 import time
+from contextlib import suppress
 
-from .framing import NewlineFramer
-from .jsonrpc import JSONRPCv2
-from .rpc import (RPCProcessor, RPCRequest, RPCRequestOut,
-                  RPCBatchOut, RPCHelperBase)
-from .util import TaskSet, Concurrency
+from aiorpcx import *
+from aiorpcx.util import Concurrency
 
 
-class ConnectionError(RuntimeError):
-    pass
-
-
-class SessionBase(asyncio.Protocol, RPCHelperBase):
+class SessionBase(asyncio.Protocol):
 
     concurrency_recalc_interval = 15
     max_errors = 10
 
-    def __init__(self, rpc_protocol=None, framer=None, loop=None):
+    def __init__(self, protocol=None, framer=None, loop=None):
+        protocol = protocol or self.default_protocol()
+        self.connection = JSONRPCConnection(protocol)
+        self.framer = framer or self.default_framer()
         self.loop = loop or asyncio.get_event_loop()
         self.logger = logging.getLogger(self.__class__.__name__)
-        rpc_protocol = rpc_protocol or self.default_rpc_protocol()
-        self.rpc = RPCProcessor(rpc_protocol, self)
-        self.framer = framer or self.default_framer()
         self.transport = None
         # Concurrency
         self.max_concurrent = 6
@@ -70,6 +64,7 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         self.close_after_send = False
         # Statistics.  The RPC object also keeps its own statistics.
         self.start_time = time.time()
+        self.errors = 0
         self.send_count = 0
         self.send_size = 0
         self.last_send = self.start_time
@@ -80,22 +75,42 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         self.bw_limit = 2000000
         self.bw_time = self.start_time
         self.bw_charge = 0
-        # Asyncronous tasks
-        self.tasks = TaskSet()
+        # Concurrency control
         self.concurrency = Concurrency(self.max_concurrent)
+        self.message_queue = Queue()
+        self.pm_task = None
 
-    def semaphore(self):
-        return self.concurrency.semaphore
+    async def _process_messages(self):
+        queue_get = self.message_queue.get
+        receive_message = self.connection.receive_message
+        # wait=object to ensure the task group doesn't keep task references
+        async with TaskGroup(wait=object) as group:
+            for n in itertools.count():
+                item = await queue_get()
+                requests = receive_message(item)
+                for request in requests:
+                    await group.spawn(self._throttled_request(request))
+                if n % self.concurrency_recalc_interval == 0:
+                    await self._update_concurrency()
 
-    def using_bandwidth(self, size):
-        '''Called when sending or receiving size bytes.'''
-        self.bw_charge += size
-
-    async def _concurrency_loop(self):
-        '''Reclaculate concurrency setting at regular intervals.'''
-        while True:
-            await self._update_concurrency()
-            await asyncio.sleep(self.concurrency_recalc_interval)
+    async def _throttled_request(self, request):
+        async with self.concurrency.semaphore:
+            try:
+                result = await self.handle_request(request)
+            except (ProtocolError, RPCError) as e:
+                result = e
+                self.errors += 1
+            except CancelledError:
+                raise
+            except Exception as e:
+                self.logger.exception(f'exception handling {request}')
+                result = RPCError(JSONRPC.INTERNAL_ERROR,
+                                  'internal server error')
+                self.errors += 1
+            if isinstance(request, Request):
+                message = request.send_result(result)
+                if message:
+                    self._send_messages((message, ), framed=False)
 
     async def _update_concurrency(self):
         now = time.time()
@@ -112,45 +127,51 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
                              f'to {target}')
             await self.concurrency.set_max_concurrent(target)
 
+    def _using_bandwidth(self, size):
+        '''Called when sending or receiving size bytes.'''
+        self.bw_charge += size
+
+    def _send_messages(self, messages, *, framed):
+        '''Send messages, an iterable.  Framed is true if they are already
+        framed.'''
+        if self.is_closing():
+            return
+        if framed:
+            framed_message = b''.join(messages)
+        else:
+            framed_message = self.framer.frame(messages)
+        if self.paused:
+            self.paused_messages.append(framed_message)
+        else:
+            self.send_size += len(framed_message)
+            self._using_bandwidth(len(framed_message))
+            self.send_count += 1
+            self.last_send = time.time()
+            if self.verbosity >= 4:
+                self.logger.debug(f'Sending framed message {framed_message}')
+            self.transport.write(framed_message)
+            if self.close_after_send or self.errors >= self.max_errors:
+                self.transport.close()
+
+    # asyncio framework
     def data_received(self, framed_message):
         '''Called by asyncio when a message comes in.'''
         if self.verbosity >= 4:
             self.logger.debug(f'Received framed message {framed_message}')
         self.recv_size += len(framed_message)
-        self.using_bandwidth(len(framed_message))
+        self._using_bandwidth(len(framed_message))
 
         count = 0
         try:
             for message in self.framer.messages(framed_message):
                 count += 1
-                self.rpc.message_received(message)
+                self.message_queue.put_nowait(message)
         except MemoryError as e:
             self.logger.warning(str(e))
 
         if count:
             self.recv_count += count
             self.last_recv = time.time()
-
-    def send_message(self, message):
-        '''Send a message over the connection. It is framed before sending.'''
-        framed_message = self.framer.frame((message, ))
-        self.send_framed_message(framed_message)
-
-    def send_framed_message(self, framed_message):
-        if self.is_closing():
-            return
-        if self.paused:
-            self.paused_messages.append(framed_message)
-        else:
-            self.send_size += len(framed_message)
-            self.using_bandwidth(len(framed_message))
-            self.send_count += 1
-            self.last_send = time.time()
-            if self.verbosity >= 4:
-                self.logger.debug(f'Sending framed message {framed_message}')
-            self.transport.write(framed_message)
-            if self.close_after_send or self.rpc.errors >= self.max_errors:
-                self.close()
 
     def pause_writing(self):
         '''Transport calls when the send buffer is full.'''
@@ -163,8 +184,47 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         self.logger.info('resuming processing')
         self.paused = False
         self.transport.resume_reading()
-        self.send_framed_message(b''.join(self.paused_messages))
+        self._send_messages(self.paused_messages, framed=True)
         self.paused_messages.clear()
+
+    def default_framer(self):
+        '''Return a default framer.'''
+        return NewlineFramer()
+
+    def connection_made(self, transport):
+        '''Called by asyncio when a connection is established.
+
+        Derived classes overriding this method must call this first.'''
+        self.transport = transport
+        # This would throw if called on a closed SSL transport.  Fixed
+        # in asyncio in Python 3.6.1 and 3.5.4
+        peer_address = transport.get_extra_info('peername')
+        # If the Socks proxy was used then _address is already set to
+        # the remote address
+        if self._address:
+            self._proxy_address = peer_address
+        else:
+            self._address = peer_address
+        self.pm_task = spawn_sync(self._process_messages(), loop=self.loop)
+
+    def connection_lost(self, exc):
+        '''Called by asyncio when the connection closes.
+
+        Tear down things done in connection_made.'''
+        self._address = None
+        self.transport = None
+        # Cancel pending requests and message processing
+        self.connection.cancel_pending_requests()
+        self.pm_task.cancel()
+        self.pm_task = None
+
+    # External API
+    async def handle_request(self, request):
+        pass
+
+    def default_protocol(self):
+        '''Return a default protocol if the user provides none.'''
+        return JSONRPCv2
 
     def peer_address(self):
         '''Returns the peer's address (Python networking address), or None if
@@ -186,112 +246,37 @@ class SessionBase(asyncio.Protocol, RPCHelperBase):
         else:
             return f'{ip_addr_str}:{port}'
 
-    # External API
-    def default_rpc_protocol(self):
-        '''Return a default rpc helper if the user provides none.'''
-        return JSONRPCv2
+    async def send_request(self, method, args=()):
+        '''Send an RPC request over the network.'''
+        message, event = self.connection.send_request(Request(method, args))
+        self._send_messages((message, ), framed=False)
+        await event.wait()
+        result = event.result
+        if isinstance(result, Exception):
+            raise result
+        return result
 
-    def default_framer(self):
-        '''Return a default framer.'''
-        return NewlineFramer()
-
-    def create_task(self, coro):
-        return self.tasks.create_task(coro)
-
-    def connection_made(self, transport):
-        '''Called by asyncio when a connection is established.
-
-        Derived classes overriding this method must call this first.'''
-        self.transport = transport
-        # This would throw if called on a closed SSL transport.  Fixed
-        # in asyncio in Python 3.6.1 and 3.5.4
-        peer_address = transport.get_extra_info('peername')
-        # If the Socks proxy was used then _address is already set to
-        # the remote address
-        if self._address:
-            self._proxy_address = peer_address
-        else:
-            self._address = peer_address
-        self.tasks.create_task(self._concurrency_loop())
-
-    def connection_lost(self, exc):
-        '''Called by asyncio when the connection closes.
-
-        Tear down things done in connection_made.'''
-        self._address = None
-        self.transport = None
-        self.tasks.cancel_all()
-        for request in self.all_requests():
-            request.set_exception(ConnectionError(
-                'connection lost before request completed'))
-
-    # App layer
-    async def wait_closed(self):
-        '''Returns when all pending tasks and requests have completed.'''
-        await self.tasks.wait()
-        await asyncio.gather(*self.all_requests(), return_exceptions=True)
+    async def send_notification(self, method, args=()):
+        '''Send an RPC notification over the network.'''
+        message = self.connection.send_notification(Notification(method, args))
+        self._send_messages((message, ), framed=False)
 
     def is_closing(self):
         '''Return True if the connection is closing.'''
         return not self.transport or self.transport.is_closing()
 
-    def close(self):
-        '''Close the connection.'''
+    async def close(self):
+        '''Close the connection and return when closed.'''
         if self.transport:
             self.transport.close()
+        if self.pm_task:
+            with suppress(CancelledError):
+                await self.pm_task
 
     def abort(self):
         '''Cut the connection abruptly.'''
         if self.transport:
             self.transport.abort()
-
-    def send_request(self, method, args=None, on_done=None, *, timeout=None):
-        '''Send an RPC request over the network.'''
-        request = RPCRequestOut(method, args, on_done, loop=self.loop)
-        self.rpc.send_request(request)
-        if timeout is not None:
-            self.set_timeout(request, timeout)
-        return request
-
-    def send_notification(self, method, args=None):
-        '''Send an RPC notification over the network.'''
-        request = RPCRequest(method, args, None)
-        self.rpc.send_request(request)
-        return request
-
-    def new_batch(self):
-        return RPCBatchOut(loop=self.loop)
-
-    def send_batch(self, batch, on_done=None, *, timeout=None):
-        self.rpc.send_batch(batch, on_done)
-        if timeout is not None:
-            self.set_timeout(batch, timeout)
-        return batch
-
-    def set_timeout(self, request, delay):
-        '''Cause a request (or batch request) to time-out after delay
-        seconds (a float).'''
-        if request not in self.rpc.all_requests():
-            raise RuntimeError(f'cannot set a timeout on {request} - it does '
-                               'not belong to this session')
-
-        def on_timeout():
-            msg = f'{request} timed out after {delay}s'
-            request.set_exception(asyncio.TimeoutError(msg))
-
-        def on_done(request):
-            handle.cancel()
-
-        handle = self.loop.call_later(delay, on_timeout)
-        request.add_done_callback(on_done)
-
-    def all_requests(self):
-        '''Returns a list of all requests that have not yet completed.
-
-        If a batch requests is outstanding, it is returned and not the
-        individual requests it is comprised of.
-        '''
-        return self.rpc.all_requests()
 
 
 class ClientSession(SessionBase):
@@ -305,9 +290,9 @@ class ClientSession(SessionBase):
     on entry to the block, and closed on exit from the block.
     '''
 
-    def __init__(self, host=None, port=None, *, rpc_protocol=None, framer=None,
+    def __init__(self, host=None, port=None, *, protocol=None, framer=None,
                  loop=None, proxy=None, **kwargs):
-        super().__init__(rpc_protocol, framer, loop)
+        super().__init__(protocol, framer, loop)
         self.host = host
         self.port = port
         self.kwargs = kwargs
@@ -329,7 +314,7 @@ class ClientSession(SessionBase):
         return self
 
     async def __aexit__(self, exc_type, exc_value, traceback):
-        self.close()
+        await self.close()
 
 
 class ServerSession(SessionBase):

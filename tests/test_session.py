@@ -1,15 +1,20 @@
 import asyncio
-from functools import partial
 import time
+from contextlib import suppress
+from functools import partial
 
 import pytest
 
 from aiorpcx import *
-from aiorpcx.rpc import RPCRequest, RPCRequestOut
+from util import RaiseTest
 
 
 # import uvloop
 # asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+
+
+def raises_method_not_found(message):
+    return RaiseTest(JSONRPC.METHOD_NOT_FOUND, message, RPCError)
 
 
 class MyServerSession(ServerSession):
@@ -21,22 +26,22 @@ class MyServerSession(ServerSession):
         self.notifications = []
         MyServerSession.current_server = self
 
-    def on_ping(self, value):
+    async def handle_request(self, request):
+        handler = getattr(self, f'on_{request.method}', None)
+        invocation = handler_invocation(handler, request)
+        return await invocation()
+
+    async def on_echo(self, value):
         return value
 
-    async def on_ping_async(self, value):
-        return value
-
-    def on_notify(self, thing):
+    async def on_notify(self, thing):
         self.notifications.append(thing)
 
-    def request_handler(self, method):
-        return getattr(self, f'on_{method}', None)
+    async def on_bug(self):
+        raise ValueError
 
-    def notification_handler(self, method):
-        if method == 'notify':
-            return self.on_notify
-        return None
+    async def on_sleepy(self):
+        await asyncio.sleep(10)
 
 
 class MyLogger(object):
@@ -60,7 +65,7 @@ def server(event_loop, unused_tcp_port):
     yield server
     server.close()
     # Needed to avoid complaints about pending tasks
-    event_loop.run_until_complete(asyncio.sleep(0))
+    event_loop.run_until_complete(sleep(0))
 
 
 class TestServer:
@@ -107,104 +112,60 @@ class TestClientSession:
         session = ClientSession('localhost', server.port, proxy=proxy,
                                 loop=event_loop)
         assert await session.create_connection() == event_loop
-        session.close()
-        await session.wait_closed()
+        await session.close()
 
     @pytest.mark.asyncio
     async def test_handlers(self, server):
-        async with ClientSession('localhost', server.port) as client:
-            assert client.notification_handler('foo') is None
-            assert client.request_handler('foo') is None
+        async with timeout_after(0.1):
+            async with ClientSession('localhost', server.port) as client:
+                with raises_method_not_found('something'):
+                    await client.send_request('something')
+                await client.send_notification('something')
+        assert client.is_closing()
 
     @pytest.mark.asyncio
     async def test_send_request(self, server):
-        called = set()
-
-        def on_done(task):
-            assert task.result() == 23
-            called.add(True)
-
         async with ClientSession('localhost', server.port) as client:
-            request = client.send_request('ping', [23], timeout=0.1)
-            result = await request
-            assert result == 23
-            # Test on_done
-            request = client.send_request('ping', [23], on_done=on_done)
-            result = await request
-            assert result == 23
-            assert called
+            assert await client.send_request('echo', [23]) == 23
 
-        assert client.is_closing()
+    @pytest.mark.asyncio
+    async def test_send_request_buggy_handler(self, server):
+        async with ClientSession('localhost', server.port) as client:
+            with RaiseTest(JSONRPC.INTERNAL_ERROR, 'internal server error',
+                           RPCError):
+                await client.send_request('bug')
 
     @pytest.mark.asyncio
     async def test_send_request_bad_args(self, server):
         async with ClientSession('localhost', server.port) as client:
-            with pytest.raises(ValueError):
-                client.send_request('ping', "23")
+            # ProtocolError as it's a protocol violation
+            with RaiseTest(JSONRPC.INVALID_ARGS, 'list', ProtocolError):
+                await client.send_request('echo', "23")
+
+    @pytest.mark.asyncio
+    async def test_send_request_timeout0(self, server):
+        async with ClientSession('localhost', server.port) as client:
+            with pytest.raises(TaskTimeout):
+                async with timeout_after(0):
+                    await client.send_request('echo', [23])
 
     @pytest.mark.asyncio
     async def test_send_request_timeout(self, server):
         async with ClientSession('localhost', server.port) as client:
-            request = client.send_request('ping', [23], timeout=0)
-            with pytest.raises(asyncio.TimeoutError):
-                await request
+            server_session = MyServerSession.current_server
+            with pytest.raises(TaskTimeout):
+                async with timeout_after(0.1):
+                    await client.send_request('sleepy')
+        # Assert the server doesn't treat cancellation as an error
+        await asyncio.sleep(0.001)
+        assert server_session.errors == 0
 
     @pytest.mark.asyncio
     async def test_send_notification(self, server):
         async with ClientSession('localhost', server.port) as client:
-            req = client.send_notification('notify', ['test'])
-            assert isinstance(req, RPCRequest)
-        await asyncio.sleep(0.001)  # Yield to event loop for processing
+            await client.send_notification('notify', ['test'])
+        await asyncio.sleep(0.001)
         assert MyServerSession.current_server.notifications == ['test']
-
-    @pytest.mark.asyncio
-    async def test_send_batch(self, server):
-        async with ClientSession('localhost', server.port) as client:
-            batch = client.new_batch()
-            req1 = batch.add_request('ping', ['a'])
-            req2 = batch.add_notification('notify', ['item'])
-            req3 = batch.add_request('ping_async', ['b'])
-            client.send_batch(batch, timeout=0.1)
-            assert isinstance(req1, RPCRequestOut)
-            assert isinstance(req2, RPCRequest)
-            assert isinstance(req3, RPCRequestOut)
-            assert await batch is False   # No meaningful result of a batch
-            assert await req1 == 'a'
-            assert await req3 == 'b'
-        assert MyServerSession.current_server.notifications == ['item']
-
-    @pytest.mark.asyncio
-    async def test_send_batch_timeout(self, server):
-        called = set()
-
-        def on_done(task):
-            assert isinstance(task.exception(), asyncio.TimeoutError)
-            called.add(True)
-
-        async with ClientSession('localhost', server.port) as client:
-            batch = client.new_batch()
-            batch.add_request('ping', ['a'])
-            client.send_batch(batch, on_done=on_done, timeout=0)
-            with pytest.raises(asyncio.TimeoutError):
-                await batch
-            assert called
-
-    @pytest.mark.asyncio
-    async def test_create_task(self, server):
-        async def double(value):
-            return value * 2
-
-        called = set()
-
-        def on_done(task):
-            assert task.result() == 12
-            called.add(True)
-
-        async with ClientSession('localhost', server.port) as client:
-            my_task = client.create_task(double(6))
-            my_task.add_done_callback(on_done)
-        assert await my_task == 12
-        assert called
 
     @pytest.mark.asyncio
     async def test_abort(self, server):
@@ -213,21 +174,11 @@ class TestClientSession:
             assert client.is_closing()
 
     @pytest.mark.asyncio
-    async def test_request_cancelled_on_close(self, server):
-        async with ClientSession('localhost', server.port) as client:
-            request = client.send_request('ping', [23])
-        await asyncio.sleep(0)  # Yield to event loop for processing
-        with pytest.raises(ConnectionError):
-            request.result()
-
-    @pytest.mark.asyncio
-    async def test_logging(self, server):
+    async def test_verbose_logging(self, server):
         async with ClientSession('localhost', server.port) as client:
             client.logger = MyLogger()
             client.verbosity = 4
-            request = client.send_request('ping', ['wait'])
-            assert len(client.logger.debugs) == 1
-            await request
+            request = await client.send_request('echo', ['wait'])
             assert len(client.logger.debugs) == 2
 
     @pytest.mark.asyncio
@@ -239,25 +190,11 @@ class TestClientSession:
             msg = 'w' * 50
             raw_msg = msg.encode()
             # Even though long it will be sent in one bit
-            request = client.send_request('ping', [msg])
+            request = client.send_request('echo', [msg])
             assert await request == msg
             assert not client.logger.warnings
             client.data_received(raw_msg)  # Unframed; no \n
             assert len(client.logger.warnings) == 1
-
-    @pytest.mark.asyncio
-    async def test_set_timeout(self, server):
-        async with ClientSession('localhost', server.port) as client:
-            req = client.send_request('ping', [23])
-            client.set_timeout(req, 0)
-            with pytest.raises(asyncio.TimeoutError):
-                await req
-            with pytest.raises(RuntimeError) as err:
-                client.set_timeout(req, 0)
-            assert 'cannot set a timeout' in str(err.value)
-            req = client.send_request('ping', ['a'])
-            client.set_timeout(req, 0.1)
-            assert await req == 'a'
 
     @pytest.mark.asyncio
     async def test_peer_address(self, server):
@@ -309,7 +246,7 @@ class TestClientSession:
                 client.transport.write = my_write
             except AttributeError:    # uvloop: transport.write is read-only
                 return
-            client.send_message(b'a')
+            client._send_messages((b'a', ), framed=False)
             assert called
             called.clear()
 
@@ -318,7 +255,7 @@ class TestClientSession:
             framed_msgs = [client.framer.frame((msg, )) for msg in msgs]
             client.pause_writing()
             for msg in msgs:
-                client.send_message(msg)
+                client._send_messages((msg, ), framed=False)
             assert not called
             client.resume_writing()
             assert called == [b''.join(framed_msgs)]
@@ -341,12 +278,19 @@ class TestClientSession:
 
     @pytest.mark.asyncio
     async def test_close_on_many_errors(self, server):
-        messages = []
+        try:
+            async with ClientSession('localhost', server.port) as client:
+                server_session = MyServerSession.current_server
+                for n in range(client.max_errors + 5):
+                    with suppress(RPCError):
+                        await client.send_request('boo')
+        except CancelledError:
+            pass
+        assert server_session.errors == server_session.max_errors
+        assert client.transport is None
 
-        async with ClientSession('localhost', server.port) as client:
-            client.rpc.message_received = messages.append
-            for n in range(client.max_errors + 5):
-                client.send_message(b'boo')
-            await asyncio.sleep(0.01)
-            assert client.transport is None
-            assert len(messages) == client.max_errors
+
+@pytest.mark.asyncio
+async def test_misc():
+    session = ClientSession()
+    await session.handle_request(Request('', []))
