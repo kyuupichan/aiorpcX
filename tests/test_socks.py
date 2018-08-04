@@ -1,24 +1,14 @@
 import asyncio
-
-# import uvloop
-# asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-
-import collections
-from functools import partial
 import ipaddress
 import os
-import random
-import socket
 import struct
-import time
-import traceback
 from random import randrange
 
 import pytest
 
-from aiorpcx.socks import SOCKSBase, SOCKS4, NeedData
-from aiorpcx.util import Timeout
+from aiorpcx.socks import NeedData
 from aiorpcx import *
+
 
 # TODO : Server tests - short and close, or just waiting no response
 
@@ -33,6 +23,13 @@ SOCKS4a_addresses = (GDNS_IPv4, GDNS_str, GCOM)
 SOCKS5_addresses = (GDNS_IPv4, GDNS_str, GCOM, IPv6_IPv6, IPv6_str)
 auth_methods = [None, SOCKSUserAuth('user', 'pass')]
 
+
+# This runs all the tests one with plain asyncio, then again with uvloop
+@pytest.fixture(scope="session", autouse=True, params=(False, True))
+def use_uvloop(request):
+    if request.param:
+        import uvloop
+        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 @pytest.fixture(params=SOCKS4_addresses)
 def addr4(request):

@@ -9,10 +9,6 @@ from aiorpcx import *
 from util import RaiseTest
 
 
-# import uvloop
-# asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-
-
 def raises_method_not_found(message):
     return RaiseTest(JSONRPC.METHOD_NOT_FOUND, message, RPCError)
 
@@ -55,6 +51,14 @@ class MyLogger(object):
 
     def warning(self, msg, **kwargs):
         self.warnings.append(msg)
+
+
+# This runs all the tests one with plain asyncio, then again with uvloop
+@pytest.fixture(scope="session", autouse=True, params=(False, True))
+def use_uvloop(request):
+    if request.param:
+        import uvloop
+        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 
 @pytest.fixture
