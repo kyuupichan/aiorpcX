@@ -1,7 +1,27 @@
 ChangeLog
 =========
 
-.. note:: The aiorpcX API will change quite a bit for version 0.6
+.. note:: The aiorpcX API changed quite a bit for version 0.6 and
+          is still unstable
+
+Version 0.6.0 (04 Aug 2018)
+---------------------------
+
+* Rework the API; docs are not yet updated
+* New JSONRPCConnection object that manages the state of a connection,
+  replacing the RPCProcessor class.  It hides the concept of request
+  IDs from higher layers; allowing simpler and more intuitive RPC
+  datastructures
+* The API now prefers async interfaces.  In particular, request handlers
+  must be async
+* The API generally throws exceptions earlier for nonsense conditions
+* TimeOut and TaskSet classes removed; use the superior curio
+  primitives that 0.5.7 introduced instead
+* SOCKS protocol implementation made i/o agnostic so the code can be
+  used whatever your I/O framework (sync, async, threads etc).  The
+  Proxy class, like the session class, remains asyncio
+* Testsuite cleaned up and shrunk, now works in Python 3.7 and also
+  tests uvloop
 
 Version 0.5.9 (29 Jul 2018)
 ---------------------------
