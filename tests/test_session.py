@@ -260,8 +260,8 @@ class TestClientSession:
             client.resume_writing()
             assert called == [b''.join(framed_msgs)]
             limit = None
-            with pytest.raises(RuntimeError):
-                client.resume_writing()
+            # Check idempotent
+            client.resume_writing()
 
     @pytest.mark.asyncio
     async def test_concurrency(self, server):

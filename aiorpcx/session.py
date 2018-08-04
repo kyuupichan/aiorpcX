@@ -181,11 +181,12 @@ class SessionBase(asyncio.Protocol):
 
     def resume_writing(self):
         '''Transport calls when the send buffer has room.'''
-        self.logger.info('resuming processing')
-        self.paused = False
-        self.transport.resume_reading()
-        self._send_messages(self.paused_messages, framed=True)
-        self.paused_messages.clear()
+        if self.paused:
+            self.logger.info('resuming processing')
+            self.paused = False
+            self.transport.resume_reading()
+            self._send_messages(self.paused_messages, framed=True)
+            self.paused_messages.clear()
 
     def default_framer(self):
         '''Return a default framer.'''
