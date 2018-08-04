@@ -67,9 +67,7 @@ def server(event_loop, unused_tcp_port):
     server = Server(MyServerSession, 'localhost', port, loop=event_loop)
     event_loop.run_until_complete(server.listen())
     yield server
-    server.close()
-    # Needed to avoid complaints about pending tasks
-    event_loop.run_until_complete(sleep(0))
+    event_loop.run_until_complete(server.close())
 
 
 class TestServer:
@@ -89,15 +87,14 @@ class TestServer:
         server = Server(None, loop=event_loop)
         assert server.server is None
         # Return immediately - the server isn't listening
-        await server.wait_closed()
+        await server.close()
 
     @pytest.mark.asyncio
     async def test_close_listening(self, server):
         asyncio_server = server.server
         assert asyncio_server is not None
         assert asyncio_server.sockets
-        server.close()
-        await server.wait_closed()
+        await server.close()
         assert server.server is None
         assert not asyncio_server.sockets
 

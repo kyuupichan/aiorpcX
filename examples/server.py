@@ -25,9 +25,8 @@ async def main():
     server.loop.call_later(60, server.close)
     try:
         await server.listen()
-        await server.wait_closed()
     finally:
-        server.close()
+        await server.close()
 
 
 logging.basicConfig(level=logging.DEBUG)

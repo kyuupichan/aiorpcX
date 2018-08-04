@@ -340,14 +340,11 @@ class Server(object):
         self.server = await self.loop.create_server(
             self._session_factory, self.host, self.port, **self._kwargs)
 
-    async def wait_closed(self):
-        if self.server:
-            await self.server.wait_closed()
-            self.server = None
-
-    def close(self):
+    async def close(self):
         '''Close the listening socket.  This does not close any ServerSession
         objects created to handle incoming connections.
         '''
         if self.server:
             self.server.close()
+            await self.server.wait_closed()
+            self.server = None
