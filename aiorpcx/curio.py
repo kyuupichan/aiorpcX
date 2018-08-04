@@ -317,8 +317,12 @@ class TimeoutAfter(object):
 
     async def __aenter__(self):
         task = Task.current_task()
-        if not self._absolute:
-            self._deadline += task._loop.time()
+        loop_time = task._loop.time()
+        if self._absolute:
+            self._secs = self._deadline - loop_time
+        else:
+            self._secs = self._deadline
+            self._deadline += loop_time
         _set_task_deadline(task, self._deadline)
         self.expired = False
         self._task = task
@@ -333,7 +337,7 @@ class TimeoutAfter(object):
             self.expired = True
             if self._ignore:
                 return True
-            raise TaskTimeout(timed_out_deadline) from None
+            raise TaskTimeout(self._secs) from None
         if timed_out_deadline is None:
             assert exc_type is CancelledError
             return False

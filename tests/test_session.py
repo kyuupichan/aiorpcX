@@ -232,7 +232,7 @@ class TestClientSession:
         async with ClientSession('localhost', server.port) as client:
             pass
 
-        await asyncio.sleep(0.001)  # Yield to event loop for processing
+        await asyncio.sleep(0.005)  # Yield to event loop for processing
         assert asyncio.Task.all_tasks(loop) == tasks
 
     @pytest.mark.asyncio

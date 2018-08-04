@@ -1,12 +1,10 @@
 import asyncio
 from functools import partial
-import logging
-import time
 
 import pytest
 
 from aiorpcx.util import (SignatureInfo, signature_info, Concurrency,
-                          Timeout, is_async_call)
+                          is_async_call)
 
 
 async def coro(x, y):
@@ -85,23 +83,3 @@ async def test_max_concurrent():
         await c.set_max_concurrent(-1)
     with pytest.raises(RuntimeError):
         await c.set_max_concurrent(2.6)
-
-
-def test_timeout():
-    async def timeout():
-        timed_out = False
-        try:
-            with Timeout(0.01, loop) as t:
-                await t.run(asyncio.sleep(1))
-        except asyncio.TimeoutError:
-            timed_out = True
-        return timed_out and t.timed_out
-
-    async def no_timeout():
-        with Timeout(1, loop) as t:
-            await t.run(asyncio.sleep(0.01))
-        return False
-
-    loop = asyncio.get_event_loop()
-    assert loop.run_until_complete(timeout()) is True
-    assert loop.run_until_complete(no_timeout()) is False

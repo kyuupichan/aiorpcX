@@ -112,35 +112,6 @@ class Concurrency(object):
                 await self.semaphore.acquire()
 
 
-class Timeout(object):
-
-    def __init__(self, delay, loop=None):
-        self.loop = loop or asyncio.get_event_loop()
-        self.delay = delay
-        self.timed_out = False
-
-    def __enter__(self):
-        self.handle = self.loop.call_later(self.delay, self._timeout)
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.handle.cancel()
-        self.handle = None
-        self.task = None
-        if self.timed_out:
-            self.timed_out = exc_type is asyncio.CancelledError
-            if self.timed_out:
-                raise asyncio.TimeoutError from None
-
-    async def run(self, coro):
-        self.task = self.loop.create_task(coro)
-        return await self.task
-
-    def _timeout(self):
-        self.task.cancel()
-        self.timed_out = True
-
-
 def check_task(logger, task):
     if not task.cancelled():
         try:
