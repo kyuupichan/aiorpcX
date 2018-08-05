@@ -4,6 +4,11 @@ ChangeLog
 .. note:: The aiorpcX API changed quite a bit for version 0.6 and
           is still unstable
 
+Version 0.6.2 (06 Aug 2018)
+---------------------------
+
+* Fix a couple of issues shown up by use in ElectrumX; add testcases
+
 Version 0.6.0 (04 Aug 2018)
 ---------------------------
 
