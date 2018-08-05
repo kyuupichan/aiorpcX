@@ -601,8 +601,7 @@ class JSONRPCConnection(object):
     def _receive_response(self, response, request_id):
         if request_id not in self._requests:
             raise ProtocolError.invalid_request(
-                f'response to unsent request: {response} '
-                f'request ID {request_id}')
+                f'response to unsent request with ID {request_id}')
         request, event = self._requests.pop(request_id)
         event.result = response.result
         event.set()
