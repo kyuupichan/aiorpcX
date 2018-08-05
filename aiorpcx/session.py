@@ -305,7 +305,7 @@ class ClientSession(SessionBase):
             return self
         if self.proxy:
             return await self.proxy.create_connection(
-                self_func, self.host, self.port, loop=self.loop, **self.kwargs)
+                self_func, self.host, self.port, **self.kwargs)
 
         return await self.loop.create_connection(
             self_func, self.host, self.port, **self.kwargs)

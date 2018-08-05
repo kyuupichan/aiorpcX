@@ -102,18 +102,12 @@ class TestServer:
 class TestClientSession:
 
     @pytest.mark.asyncio
-    async def test_proxy_loop(self, server, event_loop):
-        # Hack to test the proxy is passed the correct loop
-        class MyProxy(SOCKSProxy):
-            async def create_connection(self, protocol_factory, host, port, *,
-                                        loop=None, **kwargs):
-                return loop
-
-        proxy = MyProxy(None, SOCKS5, None)
-        session = ClientSession('localhost', server.port, proxy=proxy,
-                                loop=event_loop)
-        assert await session.create_connection() == event_loop
-        await session.close()
+    async def test_proxy(self, server):
+        proxy = SOCKSProxy(('localhost', 79), SOCKS5, None)
+        with pytest.raises(OSError):
+            async with ClientSession('localhost', server.port,
+                                     proxy=proxy) as session:
+                pass
 
     @pytest.mark.asyncio
     async def test_handlers(self, server):
