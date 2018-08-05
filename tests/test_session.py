@@ -27,6 +27,11 @@ class MyServerSession(ServerSession):
         invocation = handler_invocation(handler, request)
         return await invocation()
 
+    async def on_unexpected_response(self):
+        # Send an unexpected response
+        message = self.connection._protocol.response_message(-1, -1)
+        self._send_messages((message, ), framed=False)
+
     async def on_echo(self, value):
         return value
 
@@ -129,6 +134,14 @@ class TestClientSession:
             with RaiseTest(JSONRPC.INTERNAL_ERROR, 'internal server error',
                            RPCError):
                 await client.send_request('bug')
+
+    @pytest.mark.asyncio
+    async def test_unexpected_response(self, server, caplog):
+        async with ClientSession('localhost', server.port) as client:
+            # A request not a notification so we don't exit immediately
+            await client.send_request('unexpected_response')
+        assert any('unsent request' in record.message
+                   for record in caplog.records)
 
     @pytest.mark.asyncio
     async def test_send_request_bad_args(self, server):

@@ -87,9 +87,13 @@ class SessionBase(asyncio.Protocol):
         async with TaskGroup(wait=object) as group:
             for n in itertools.count():
                 item = await queue_get()
-                requests = receive_message(item)
-                for request in requests:
-                    await group.spawn(self._throttled_request(request))
+                try:
+                    requests = receive_message(item)
+                except ProtocolError as e:
+                    self.logger.error(f'{e!r}')
+                else:
+                    for request in requests:
+                        await group.spawn(self._throttled_request(request))
                 if n % self.concurrency_recalc_interval == 0:
                     await self._update_concurrency()
 
@@ -102,7 +106,7 @@ class SessionBase(asyncio.Protocol):
                 self.errors += 1
             except CancelledError:
                 raise
-            except Exception as e:
+            except Exception:
                 self.logger.exception(f'exception handling {request}')
                 result = RPCError(JSONRPC.INTERNAL_ERROR,
                                   'internal server error')
@@ -167,7 +171,7 @@ class SessionBase(asyncio.Protocol):
                 count += 1
                 self.message_queue.put_nowait(message)
         except MemoryError as e:
-            self.logger.warning(str(e))
+            self.logger.warning(f'{e!r}')
 
         if count:
             self.recv_count += count

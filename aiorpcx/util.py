@@ -116,5 +116,5 @@ def check_task(logger, task):
     if not task.cancelled():
         try:
             task.result()
-        except Exception as e:
+        except Exception:
             logger.error('task crashed: %r', task, exc_info=True)

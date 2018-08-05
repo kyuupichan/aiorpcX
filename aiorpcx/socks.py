@@ -339,7 +339,7 @@ class SOCKSProxy(object):
                 return sock, address
             exceptions.append(sock)
 
-        strings = set(str(exc) for exc in exceptions)
+        strings = set(f'{exc!r}' for exc in exceptions)
         raise (exceptions[0] if len(strings) == 1 else
                OSError(f'multiple exceptions: {", ".join(strings)}'))
 

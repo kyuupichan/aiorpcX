@@ -226,9 +226,9 @@ class JSONRPC(object):
             return json.loads(message.decode())
         except UnicodeDecodeError as e:
             return ProtocolError(cls.PARSE_ERROR,
-                                 f'messages must be encoded in UTF-8: {e}')
+                                 f'messages must be encoded in UTF-8: {e!r}')
         except json.JSONDecodeError as e:
-            return ProtocolError(cls.PARSE_ERROR, f'cannot decode JSON: {e}')
+            return ProtocolError(cls.PARSE_ERROR, f'cannot decode JSON: {e!r}')
 
     #
     # External API
@@ -600,8 +600,7 @@ class JSONRPCConnection(object):
 
     def _receive_response(self, response, request_id):
         if request_id not in self._requests:
-            raise ProtocolError.invalid_request(
-                f'response to unsent request with ID {request_id}')
+            raise ProtocolError.invalid_request('response to unsent request')
         request, event = self._requests.pop(request_id)
         event.result = response.result
         event.set()
@@ -631,7 +630,7 @@ class JSONRPCConnection(object):
         fset = frozenset(request_ids)
         if fset not in self._requests:
             raise ProtocolError.invalid_request(
-                f'response to unsent batch: {response_batch!r} {request_ids}')
+                f'response to unsent batch: {response_batch!r}')
         request_batch, event = self._requests.pop(fset)
 
         if len(fset) != len(request_ids):
