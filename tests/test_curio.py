@@ -1398,3 +1398,18 @@ async def test_task_group_use_error():
          await t2
 
     await main()
+
+@pytest.mark.asyncio
+async def test_task_group_object_cancel():
+    try:
+        async with TaskGroup(wait=object) as g:
+            task1 = await g.spawn(sleep, 1)
+            task2 = await g.spawn(sleep, 2)
+            await sleep(0.001)
+            task1.cancel()
+    except CancelledError:
+        assert False
+    else:
+        assert task1.cancelled()
+        assert task2.cancelled()
+        assert g.completed is None

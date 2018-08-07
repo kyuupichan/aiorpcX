@@ -221,8 +221,9 @@ class TaskGroup(object):
                         return
                     if errored(task):
                         break
-                    if wait is object and task.result() is not None:
-                        return
+                    if wait is object:
+                        if task.cancelled() or task.result() is not None:
+                            return
             else:  # any
                 task = await self.next_done()
                 if task is None or not errored(task):
