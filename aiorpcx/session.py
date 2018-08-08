@@ -39,7 +39,6 @@ from aiorpcx.util import Concurrency
 
 class SessionBase(asyncio.Protocol):
 
-    concurrency_recalc_interval = 15
     max_errors = 10
 
     def __init__(self, protocol=None, framer=None, loop=None):
@@ -77,44 +76,54 @@ class SessionBase(asyncio.Protocol):
         self.bw_charge = 0
         # Concurrency control
         self.concurrency = Concurrency(self.max_concurrent)
-        self.message_queue = Queue()
+        self.work_queue = Queue()
         self.pm_task = None
 
     async def _process_messages(self):
-        queue_get = self.message_queue.get
-        receive_message = self.connection.receive_message
-        # wait=object to ensure the task group doesn't keep task references
-        async with TaskGroup(wait=object) as group:
+        '''Process incoming messages asynchronously.  They are placed
+        syncronously on a queue.
+        '''
+        async with TaskGroup() as group:
             for n in itertools.count():
-                item = await queue_get()
+                item = await self.work_queue.get()
+                # Consume completed request tasks
+                if item is None:
+                    await group.next_result()
+                    continue
+
                 try:
-                    requests = receive_message(item)
+                    requests = self.connection.receive_message(item)
                 except ProtocolError as e:
                     self.logger.error(f'{e!r}')
                 else:
                     for request in requests:
                         await group.spawn(self._throttled_request(request))
-                if n % self.concurrency_recalc_interval == 0:
+                if n % 10 == 0:
                     await self._update_concurrency()
 
     async def _throttled_request(self, request):
-        async with self.concurrency.semaphore:
-            try:
-                result = await self.handle_request(request)
-            except (ProtocolError, RPCError) as e:
-                result = e
-                self.errors += 1
-            except CancelledError:
-                raise
-            except Exception:
-                self.logger.exception(f'exception handling {request}')
-                result = RPCError(JSONRPC.INTERNAL_ERROR,
-                                  'internal server error')
-                self.errors += 1
-            if isinstance(request, Request):
-                message = request.send_result(result)
-                if message:
-                    self._send_messages((message, ), framed=False)
+        '''Process a request.  When complete, put None on the work queue
+        to tell the main loop to collect the result.'''
+        try:
+            async with self.concurrency.semaphore:
+                try:
+                    result = await self.handle_request(request)
+                except (ProtocolError, RPCError) as e:
+                    result = e
+                    self.errors += 1
+                except CancelledError:
+                    raise
+                except Exception:
+                    self.logger.exception(f'exception handling {request}')
+                    result = RPCError(JSONRPC.INTERNAL_ERROR,
+                                      'internal server error')
+                    self.errors += 1
+                if isinstance(request, Request):
+                    message = request.send_result(result)
+                    if message:
+                        self._send_messages((message, ), framed=False)
+        finally:
+            await self.work_queue.put(None)
 
     async def _update_concurrency(self):
         now = time.time()
@@ -169,7 +178,7 @@ class SessionBase(asyncio.Protocol):
         try:
             for message in self.framer.messages(framed_message):
                 count += 1
-                self.message_queue.put_nowait(message)
+                self.work_queue.put_nowait(message)
         except MemoryError as e:
             self.logger.warning(f'{e!r}')
 
