@@ -166,12 +166,12 @@ async def test_tg_cm_all():
 
 @pytest.mark.asyncio
 async def test_tg_join_any():
-    tasks = [await spawn(sleep, x/200) for x in range(5, 0, -1)]
+    tasks = [await spawn(sleep, 0.001 + x) for x in range(0, 5)]
     t = TaskGroup(tasks)
     await t.join(wait=any)
     assert all(task.done() for task in tasks)
-    assert all(task.cancelled() for task in tasks[:-1])
-    assert not tasks[-1].cancelled()
+    assert all(task.cancelled() for task in tasks[1:])
+    assert not tasks[0].cancelled()
 
 
 @pytest.mark.asyncio
