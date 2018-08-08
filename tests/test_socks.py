@@ -537,16 +537,6 @@ def proxy_address(event_loop, unused_tcp_port):
 class TestSOCKSProxy(object):
 
     @pytest.mark.asyncio
-    async def test_failure(self):
-        result = await SOCKSProxy.auto_detect_address(('8.8.8.8', 53), None)
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_cannot_connect(self):
-        result = await SOCKSProxy.auto_detect_address(('0.0.0.0', 53), None)
-        assert result is None
-
-    @pytest.mark.asyncio
     async def test_good_SOCKS5(self, proxy_address, auth):
         chosen_auth = 2 if auth else 0
         FakeServer.response = TestSOCKS5.response(chosen_auth,
@@ -580,6 +570,16 @@ class TestSOCKSProxy(object):
         assert result.address == proxy_address
         assert result.auth == auth
         assert result.peername == ('127.0.0.1', proxy_address[1])
+
+    @pytest.mark.asyncio
+    async def test_auto_detect_address_failure(self):
+        result = await SOCKSProxy.auto_detect_address(('8.8.8.8', 53), None)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_auto_detect_address_cannot_connect(self):
+        result = await SOCKSProxy.auto_detect_address(('localhost', 0), None)
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_autodetect_host_success(self, proxy_address, auth):
