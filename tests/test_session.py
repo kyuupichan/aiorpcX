@@ -228,15 +228,15 @@ class TestClientSession:
         tasks = asyncio.Task.all_tasks(loop)
         try:
             client = ClientSession('localhost', 0)
-            await client.connect()
-        except Exception:
+            await client.create_connection()
+        except OSError:
             pass
         assert asyncio.Task.all_tasks(loop) == tasks
 
-        async with ClientSession('localhost', server.port) as client:
+        async with ClientSession('localhost', server.port):
             pass
 
-        await asyncio.sleep(0.005)  # Yield to event loop for processing
+        await asyncio.sleep(0.005)  # Yield to event loop
         assert asyncio.Task.all_tasks(loop) == tasks
 
     @pytest.mark.asyncio

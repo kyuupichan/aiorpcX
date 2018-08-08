@@ -221,7 +221,10 @@ class SessionBase(asyncio.Protocol):
         # Cancel pending requests and message processing
         self.connection.cancel_pending_requests()
         self.pm_task.cancel()
-        self.pm_task = None
+        # This helps task release of server sessions as asyncio
+        # doesn't call close() explicitly
+        if not isinstance(self, ClientSession):
+            self.pm_task = None
 
     # External API
     async def handle_request(self, request):
