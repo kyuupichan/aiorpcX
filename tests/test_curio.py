@@ -1413,3 +1413,8 @@ async def test_task_group_object_cancel():
         assert task1.cancelled()
         assert task2.cancelled()
         assert g.completed is None
+
+
+def test_TaskTimeout_str():
+    t = TaskTimeout(0.5)
+    assert str(t) == 'task timed out after 0.5s'

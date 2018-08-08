@@ -265,7 +265,12 @@ class TaskGroup(object):
 
 
 class TaskTimeout(CancelledError):
-    pass
+
+    def __init__(self, secs):
+        self.secs = secs
+
+    def __str__(self):
+        return f'task timed out after {self.args[0]}s'
 
 
 class TimeoutCancellationError(CancelledError):
