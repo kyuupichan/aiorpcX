@@ -7,6 +7,7 @@ setuptools.setup(
     name='aiorpcX',
     version=version,
     python_requires='>=3.6',
+    install_requires=['attrs'],
     packages=['aiorpcx'],
     description='Generic async RPC implementation, including JSON-RPC',
     author='Neil Booth',
