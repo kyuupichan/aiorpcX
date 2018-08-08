@@ -176,10 +176,10 @@ class TestClientSession:
         assert MyServerSession.current_server.notifications == ['test']
 
     @pytest.mark.asyncio
-    async def test_abort(self, server):
+    async def test_force_close(self, server):
         async with ClientSession('localhost', server.port) as client:
-            client.abort()
-            assert client.is_closing()
+            await client.close(force_after=0.001)
+        assert not client.transport
 
     @pytest.mark.asyncio
     async def test_verbose_logging(self, server):

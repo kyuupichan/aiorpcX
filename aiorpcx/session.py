@@ -273,18 +273,18 @@ class SessionBase(asyncio.Protocol):
         '''Return True if the connection is closing.'''
         return not self.transport or self.transport.is_closing()
 
-    async def close(self):
+    async def close(self, *, force_after=30):
         '''Close the connection and return when closed.'''
         if self.transport:
             self.transport.close()
         if self.pm_task:
+            task = self.pm_task   # copy as self.pm_task may be set to None
             with suppress(CancelledError):
-                await self.pm_task
-
-    def abort(self):
-        '''Cut the connection abruptly.'''
-        if self.transport:
-            self.transport.abort()
+                async with ignore_after(force_after):
+                    await task
+                if self.transport:
+                    self.transport.abort()
+                await task
 
 
 class ClientSession(SessionBase):
