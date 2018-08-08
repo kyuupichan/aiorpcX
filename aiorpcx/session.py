@@ -41,9 +41,8 @@ class SessionBase(asyncio.Protocol):
 
     max_errors = 10
 
-    def __init__(self, protocol=None, framer=None, loop=None):
-        protocol = protocol or self.default_protocol()
-        self.connection = JSONRPCConnection(protocol)
+    def __init__(self, connection=None, framer=None, loop=None):
+        self.connection = connection or self.default_connection()
         self.framer = framer or self.default_framer()
         self.loop = loop or asyncio.get_event_loop()
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -239,9 +238,9 @@ class SessionBase(asyncio.Protocol):
     async def handle_request(self, request):
         pass
 
-    def default_protocol(self):
-        '''Return a default protocol if the user provides none.'''
-        return JSONRPCv2
+    def default_connection(self):
+        '''Return a default connection if the user provides none.'''
+        return JSONRPCConnection(JSONRPCv2)
 
     def peer_address(self):
         '''Returns the peer's address (Python networking address), or None if
@@ -307,9 +306,9 @@ class ClientSession(SessionBase):
     on entry to the block, and closed on exit from the block.
     '''
 
-    def __init__(self, host=None, port=None, *, protocol=None, framer=None,
+    def __init__(self, host=None, port=None, *, connection=None, framer=None,
                  loop=None, proxy=None, **kwargs):
-        super().__init__(protocol, framer, loop)
+        super().__init__(connection, framer, loop)
         self.host = host
         self.port = port
         self.kwargs = kwargs

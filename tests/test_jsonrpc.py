@@ -984,13 +984,14 @@ async def test_max_response_size(protocol):
             if message:
                 assert not connection.receive_message(message)
 
-    connection = JSONRPCConnection(protocol, max_response_size=size)
+    connection = JSONRPCConnection(protocol)
+    connection.max_response_size = size
     async with timeout_after(0.01):
         async with TaskGroup() as group:
             await group.spawn(receive_request(1))
             await group.spawn(send_request_good(request))
 
-    connection = JSONRPCConnection(protocol, max_response_size=size - 1)
+    connection.max_response_size = size - 1
     async with timeout_after(0.01):
         async with TaskGroup() as group:
             await group.spawn(receive_request(1))
@@ -1007,7 +1008,7 @@ async def test_max_response_size(protocol):
                 assert "too large" in part_result.message
 
     if protocol.allow_batches:
-        connection = JSONRPCConnection(protocol, max_response_size=size + 3)
+        connection.max_response_size = size + 3
         batch = Batch([request, request, request])
         async with timeout_after(0.01):
             async with TaskGroup() as group:

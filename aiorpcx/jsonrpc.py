@@ -583,18 +583,17 @@ class JSONRPCConnection(object):
 
     _id_counter = itertools.count()
 
-    def __init__(self, protocol, max_response_size=1000000):
-        '''Responses over max_response_size send an error response instead.
-        Set to zero to not limit response sizes.'''
+    def __init__(self, protocol):
         self._protocol = protocol
-        self._max_response_size = max_response_size
         # Sent Requests and Batches that have not received a response.
         # The key is its request ID; for a batch it is its frozenset
         # of request IDs
         self._requests = {}
+        # A public attribute intended to be settable dynamically
+        self.max_response_size = 0
 
     def _oversized_response_message(self, request_id):
-        text = f'response too large (over {self._max_response_size:,d} bytes'
+        text = f'response too large (over {self.max_response_size:,d} bytes'
         error = RPCError.invalid_request(text)
         return self._protocol.response_message(error, request_id)
 
@@ -611,7 +610,7 @@ class JSONRPCConnection(object):
             nonlocal size
             part = self._protocol.response_message(result, request_id)
             size += len(part) + 2
-            if size > self._max_response_size > 0:
+            if size > self.max_response_size > 0:
                 part = self._oversized_response_message(request_id)
             parts.append(part)
             if len(parts) == count:
@@ -650,7 +649,7 @@ class JSONRPCConnection(object):
 
     def _send_result(self, request_id, result):
         message = self._protocol.response_message(result, request_id)
-        if len(message) > self._max_response_size > 0:
+        if len(message) > self.max_response_size > 0:
             message = self._oversized_response_message(request_id)
         return message
 

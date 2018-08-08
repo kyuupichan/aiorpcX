@@ -299,6 +299,19 @@ class TestClientSession:
 
 
 @pytest.mark.asyncio
-async def test_misc():
+async def test_base_class_implementation():
     session = ClientSession()
     await session.handle_request(Request('', []))
+
+
+def test_default_and_passed_connection():
+    connection = JSONRPCConnection(JSONRPCv1)
+    class MyClientSession(ClientSession):
+        def default_connection(self):
+            return connection
+
+    session = MyClientSession()
+    assert session.connection == connection
+
+    session = ClientSession(connection=connection)
+    assert session.connection == connection
