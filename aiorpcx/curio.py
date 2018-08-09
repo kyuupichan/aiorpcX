@@ -41,6 +41,7 @@ from asyncio import (
     CancelledError, get_event_loop, Queue, Event, sleep, Task
 )
 from collections import deque
+from contextlib import suppress
 from functools import partial
 
 from aiorpcx.util import normalize_corofunc, check_task
@@ -243,7 +244,8 @@ class TaskGroup(object):
         pending = list(self._pending)
         for task in pending:
             task.cancel()
-        await sleep(0)
+            with suppress(CancelledError):
+                await task
 
     def __aiter__(self):
         return self

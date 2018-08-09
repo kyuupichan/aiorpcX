@@ -1,5 +1,5 @@
 from asyncio import (
-    sleep, CancelledError, get_event_loop, Event, InvalidStateError,
+    sleep, CancelledError, get_event_loop, Event, InvalidStateError
 )
 import time
 
@@ -1379,6 +1379,22 @@ async def test_task_group_cancel_remaining():
         assert t3.cancelled()
 
     await main()
+
+
+@pytest.mark.asyncio
+async def test_task_group_cancel_remaining_waits():
+    async def sleep_soundly():
+        try:
+            await sleep(0.01)
+        except CancelledError:
+            await sleep(0.01)
+
+    task = await spawn(sleep_soundly)
+    with pytest.raises(CancelledError):
+        async with TaskGroup([task]) as g:
+            await sleep(0)  # ensure the tasks are scheduled
+            raise CancelledError
+    assert task.done()
 
 
 @pytest.mark.asyncio
