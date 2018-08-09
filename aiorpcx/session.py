@@ -349,7 +349,6 @@ class Server(object):
         self.server = None
         self._session_factory = session_factory
         self._kwargs = kwargs
-        self._sessions = set()
 
     async def listen(self):
         self.server = await self.loop.create_server(
