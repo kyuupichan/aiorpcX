@@ -4,6 +4,20 @@ ChangeLog
 .. note:: The aiorpcX API changed quite a bit for version 0.6 and
           is still unstable
 
+Version 0.7.1 (09 Aug 2018)
+---------------------------
+
+* TaskGroup.cancel_remaining() must wait for the tasks to complete
+* Fix some tests whose success / failure depended on time races
+* fix `#3`_
+
+Version 0.7.0 (08 Aug 2018)
+---------------------------
+
+* Fix wait=object and cancellation
+* Change Session and JSONRPCConnection APIs
+* Fix a test that would hang on some systems
+
 Version 0.6.2 (06 Aug 2018)
 ---------------------------
 
@@ -49,3 +63,5 @@ Version 0.5.6
 * Define a ConnectionError exception, and set it on uncomplete
   requests when a connection is lost.  Previously, those requests were
   cancelled, which does not give an informative error message.
+
+.. _#3: https://github.com/kyuupichan/aiorpcX/issues/3
