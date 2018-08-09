@@ -283,7 +283,7 @@ async def test_cm_join_errored_past():
 
 @pytest.mark.asyncio
 async def test_cm_raises():
-    tasks = [await spawn(sleep, 0) for n in range(3)]
+    tasks = [await spawn(sleep, 0.01) for n in range(3)]
     with pytest.raises(ValueError) as e:
         async with TaskGroup(tasks) as t:
             raise ValueError
