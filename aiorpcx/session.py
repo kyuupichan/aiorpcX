@@ -200,10 +200,6 @@ class SessionBase(asyncio.Protocol):
             self._send_messages(self.paused_messages, framed=True)
             self.paused_messages.clear()
 
-    def default_framer(self):
-        '''Return a default framer.'''
-        return NewlineFramer()
-
     def connection_made(self, transport):
         '''Called by asyncio when a connection is established.
 
@@ -235,12 +231,16 @@ class SessionBase(asyncio.Protocol):
             self.pm_task = None
 
     # External API
-    async def handle_request(self, request):
-        pass
-
     def default_connection(self):
         '''Return a default connection if the user provides none.'''
         return JSONRPCConnection(JSONRPCv2)
+
+    def default_framer(self):
+        '''Return a default framer.'''
+        return NewlineFramer()
+
+    async def handle_request(self, request):
+        pass
 
     def peer_address(self):
         '''Returns the peer's address (Python networking address), or None if
