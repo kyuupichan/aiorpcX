@@ -297,6 +297,65 @@ class TestClientSession:
         assert server_session.errors == server_session.max_errors
         assert client.transport is None
 
+    @pytest.mark.asyncio
+    async def test_send_empty_batch(self, server):
+        async with ClientSession('localhost', server.port) as client:
+            with RaiseTest(JSONRPC.INVALID_REQUEST, 'empty', ProtocolError):
+                async with client.send_batch() as batch:
+                    pass
+            assert len(batch) == 0
+            assert batch.batch is None
+            assert batch.results is None
+
+    @pytest.mark.asyncio
+    async def test_send_batch(self, server):
+        async with ClientSession('localhost', server.port) as client:
+            async with client.send_batch() as batch:
+                batch.add_request("echo", [1])
+                batch.add_notification("echo", [2])
+                batch.add_request("echo", [3])
+
+            assert isinstance(batch.batch, Batch)
+            assert len(batch) == 3
+            assert isinstance(batch.results, list)
+            assert len(batch.results) == 2
+            assert batch.results == [1, 3]
+
+    @pytest.mark.asyncio
+    async def test_send_batch_errors_quiet(self, server):
+        async with ClientSession('localhost', server.port) as client:
+            async with client.send_batch() as batch:
+                batch.add_request("echo", [1])
+                batch.add_request("bug")
+
+            assert isinstance(batch.batch, Batch)
+            assert len(batch) == 2
+            assert isinstance(batch.results, list)
+            assert len(batch.results) == 2
+            assert isinstance(batch.results[1], RPCError)
+
+    @pytest.mark.asyncio
+    async def test_send_batch_errors(self, server):
+        async with ClientSession('localhost', server.port) as client:
+            with pytest.raises(BatchError) as e:
+                async with client.send_batch(raise_errors=True) as batch:
+                    batch.add_request("echo", [1])
+                    batch.add_request("bug")
+
+            assert e.value.request is batch
+            assert isinstance(batch.batch, Batch)
+            assert len(batch) == 2
+            assert isinstance(batch.results, list)
+            assert len(batch.results) == 2
+            assert isinstance(batch.results[1], RPCError)
+
+    @pytest.mark.asyncio
+    async def test_send_batch_bad_request(self, server):
+        async with ClientSession('localhost', server.port) as client:
+            with RaiseTest(JSONRPC.METHOD_NOT_FOUND, 'string', ProtocolError):
+                async with client.send_batch() as batch:
+                    batch.add_request(23)
+
 
 @pytest.mark.asyncio
 async def test_base_class_implementation():

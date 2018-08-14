@@ -24,7 +24,7 @@
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
-__all__ = ('ClientSession', 'ServerSession', 'Server')
+__all__ = ('ClientSession', 'ServerSession', 'Server', 'BatchError')
 
 
 import asyncio
@@ -35,6 +35,79 @@ from contextlib import suppress
 
 from aiorpcx import *
 from aiorpcx.util import Concurrency
+
+
+class BatchError(Exception):
+
+    def __init__(self, request):
+        self.request = request   # BatchRequest object
+
+
+class BatchRequest(object):
+    '''Used to build a batch request to send to the server.  Stores
+    the
+
+    Attributes batch and results are initially None.
+
+    Adding an invalid request or notification immediately raises a
+    ProtocolError.
+
+    On exiting the with clause, it will:
+
+    1) create a Batch object for the requests in the order they were
+       added.  If the batch is empty this raises a ProtocolError.
+
+    2) set the "batch" attribute to be that batch
+
+    3) send the batch request and wait for a response
+
+    4) raise a ProtocolError if the protocol was violated by the
+       server.  Currently this only happens if it gave more than one
+       response to any request
+
+    5) otherwise there is precisely one response to each Request.  Set
+       the "results" attribute to the array of results; the responses
+       are ordered to match the Requests in the batch.  Notifications
+       do not get a response.
+
+    6) if raise_errors is True and any individual response was a JSON
+       RPC error response, or violated the protocol in some way, a
+       BatchError exception is raised.  Otherwise the caller can be
+       certain each request returned a standard result.
+    '''
+
+    def __init__(self, session, raise_errors):
+        self._session = session
+        self._raise_errors = raise_errors
+        self._requests = []
+        self.batch = None
+        self.results = None
+
+    def add_request(self, method, args=()):
+        self._requests.append(Request(method, args))
+
+    def add_notification(self, method, args=()):
+        self._requests.append(Notification(method, args))
+
+    def __len__(self):
+        return len(self._requests)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        if exc_type is None:
+            self.batch = Batch(self._requests)
+            message, event = self._session.connection.send_batch(self.batch)
+            self._session._send_messages((message, ), framed=False)
+            await event.wait()
+            result = event.result
+            if isinstance(result, Exception):  # A ProtocolError
+                raise result
+            self.results = result
+            if self._raise_errors:
+                if any(isinstance(item, Exception) for item in result):
+                    raise BatchError(self)
 
 
 class SessionBase(asyncio.Protocol):
@@ -276,6 +349,22 @@ class SessionBase(asyncio.Protocol):
         '''Send an RPC notification over the network.'''
         message = self.connection.send_notification(Notification(method, args))
         self._send_messages((message, ), framed=False)
+
+    def send_batch(self, raise_errors=False):
+        '''Return a BatchRequest.  Intended to be used like so:
+
+           async with session.send_batch() as batch:
+               batch.add_request("method1")
+               batch.add_request("sum", (x, y))
+               batch.add_notification("updated")
+
+           for result in batch.results:
+              ...
+
+        Note that in some circumstances exceptions can be raised; see
+        BatchRequest doc string.
+        '''
+        return BatchRequest(self, raise_errors)
 
     def is_closing(self):
         '''Return True if the connection is closing.'''
