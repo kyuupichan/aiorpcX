@@ -317,9 +317,9 @@ class TestClientSession:
 
             assert isinstance(batch.batch, Batch)
             assert len(batch) == 3
-            assert isinstance(batch.results, list)
+            assert isinstance(batch.results, tuple)
             assert len(batch.results) == 2
-            assert batch.results == [1, 3]
+            assert batch.results == (1, 3)
 
     @pytest.mark.asyncio
     async def test_send_batch_errors_quiet(self, server):
@@ -330,7 +330,7 @@ class TestClientSession:
 
             assert isinstance(batch.batch, Batch)
             assert len(batch) == 2
-            assert isinstance(batch.results, list)
+            assert isinstance(batch.results, tuple)
             assert len(batch.results) == 2
             assert isinstance(batch.results[1], RPCError)
 
@@ -345,7 +345,7 @@ class TestClientSession:
             assert e.value.request is batch
             assert isinstance(batch.batch, Batch)
             assert len(batch) == 2
-            assert isinstance(batch.results, list)
+            assert isinstance(batch.results, tuple)
             assert len(batch.results) == 2
             assert isinstance(batch.results[1], RPCError)
 

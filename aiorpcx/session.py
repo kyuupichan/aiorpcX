@@ -66,7 +66,7 @@ class BatchRequest(object):
        response to any request
 
     5) otherwise there is precisely one response to each Request.  Set
-       the "results" attribute to the array of results; the responses
+       the "results" attribute to the tuple of results; the responses
        are ordered to match the Requests in the batch.  Notifications
        do not get a response.
 

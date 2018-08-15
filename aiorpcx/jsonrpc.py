@@ -586,7 +586,7 @@ class JSONRPCConnection(object):
     def __init__(self, protocol):
         self._protocol = protocol
         # Sent Requests and Batches that have not received a response.
-        # The key is its request ID; for a batch it is its frozenset
+        # The key is its request ID; for a batch it is sorted tuple
         # of request IDs
         self._requests = {}
         # A public attribute intended to be settable dynamically
@@ -626,24 +626,14 @@ class JSONRPCConnection(object):
         return batch.items
 
     def _receive_response_batch(self, response_batch, request_ids):
-        fset = frozenset(request_ids)
-        if fset not in self._requests:
+        results = [response.result for response in response_batch]
+        ordered = sorted(zip(request_ids, results), key=lambda t: t[0])
+        ordered_ids, ordered_results = zip(*ordered)
+        if ordered_ids not in self._requests:
             raise ProtocolError.invalid_request(
                 f'response to unsent batch: {response_batch!r}')
-        request_batch, event = self._requests.pop(fset)
-
-        if len(fset) != len(request_ids):
-            result = ProtocolError.invalid_request(
-                f'batch has duplicate responses')
-        else:
-            ordered = sorted(zip(request_ids, response_batch))
-            response_iter = iter(ordered)
-            result = []
-            for request in request_batch:
-                if isinstance(request, Request):
-                    _, response = next(response_iter)
-                    result.append(response.result)
-        event.result = result
+        request_batch, event = self._requests.pop(ordered_ids)
+        event.result = ordered_results
         event.set()
         return []
 
@@ -679,10 +669,10 @@ class JSONRPCConnection(object):
         return self._protocol.notification_message(notification)
 
     def send_batch(self, batch):
-        ids = [next(self._id_counter)
-               for request in batch if isinstance(request, Request)]
+        ids = tuple(next(self._id_counter)
+                    for request in batch if isinstance(request, Request))
         message = self._protocol.batch_message(batch, ids)
-        event = self._event(batch, frozenset(ids)) if ids else None
+        event = self._event(batch, ids) if ids else None
         return message, event
 
     def receive_message(self, message):

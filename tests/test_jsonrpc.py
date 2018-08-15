@@ -814,7 +814,7 @@ async def test_send_batch_round_trip(batch_protocol):
         message, event = connection.send_batch(batch)
         await queue.put(message)
         await event.wait()
-        assert event.result == answers
+        assert event.result == tuple(answers)
 
     async def receive_request():
         # This will be the batch request sent
@@ -890,37 +890,33 @@ async def test_batch_fails(batch_protocol):
     async def send_request():
         message, event = connection.send_batch(batch)
         await queue.put(message)
-        await event.wait()
-        assert_ProtocolError(event.result, JSONRPC.INVALID_REQUEST,
-                             'duplicate')
-        assert not connection.pending_requests()
+        async with ignore_after(0.01):
+            await event.wait()
 
     async def receive_request():
         # This will be the batch request sent
         message = await queue.get()
         assert connection.pending_requests() == [batch]
-
         # Send a batch response we didn't get
         parts = [protocol.response_message(2, "bad_id")]
         fake_message = protocol.batch_message_from_parts(parts)
         with RaiseTest(JSONRPC.INVALID_REQUEST, 'unsent batch', ProtocolError):
             connection.receive_message(fake_message)
-
         assert connection.pending_requests() == [batch]
 
         # Send a batch with a duplicate response
         data = json.loads(message.decode())
         parts = [protocol.response_message(2, data[0]['id'])] * 2
         fake_message = protocol.batch_message_from_parts(parts)
-        requests = connection.receive_message(fake_message)
-        assert not requests
 
-    async with timeout_after(0.01):
-        async with TaskGroup() as group:
-            await group.spawn(receive_request)
-            await group.spawn(send_request)
+        with RaiseTest(JSONRPC.INVALID_REQUEST, 'unsent batch', ProtocolError):
+            connection.receive_message(fake_message)
 
-    assert not connection.pending_requests()
+    async with TaskGroup() as group:
+        await group.spawn(receive_request)
+        await group.spawn(send_request)
+
+    assert connection.pending_requests() == [batch]
 
 
 @pytest.mark.asyncio
