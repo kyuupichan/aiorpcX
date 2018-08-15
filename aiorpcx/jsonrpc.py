@@ -104,7 +104,7 @@ class Response(object):
         self.result = result
 
 
-class ErrorBase(Exception):
+class CodeMessageError(Exception):
 
     def __init__(self, code, message):
         super().__init__(code, message)
@@ -134,11 +134,11 @@ class ErrorBase(Exception):
         return cls.invalid_request('batch is empty')
 
 
-class RPCError(ErrorBase):
+class RPCError(CodeMessageError):
     pass
 
 
-class ProtocolError(ErrorBase):
+class ProtocolError(CodeMessageError):
     pass
 
 
