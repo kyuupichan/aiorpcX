@@ -27,8 +27,8 @@
 
 __all__ = ('JSONRPC', 'JSONRPCv1', 'JSONRPCv2', 'JSONRPCLoose',
            'JSONRPCAutoDetect', 'Request', 'Notification', 'Batch',
-           'RPCError', 'ProtocolError', 'JSONRPCConnection',
-           'handler_invocation')
+           'RPCError', 'ProtocolError', 'ProtocolWarning',
+           'JSONRPCConnection', 'handler_invocation')
 
 import itertools
 import json
@@ -139,6 +139,12 @@ class RPCError(CodeMessageError):
 
 
 class ProtocolError(CodeMessageError):
+    pass
+
+
+class ProtocolWarning(Exception):
+    '''Raised if a message is received that might warrant logging
+    in the client for debugging purposes.'''
     pass
 
 
@@ -598,10 +604,14 @@ class JSONRPCConnection(object):
         return self._protocol.response_message(error, request_id)
 
     def _receive_response(self, response, request_id):
+        result = response.result
         if request_id not in self._requests:
-            raise ProtocolError.invalid_request('response to unsent request')
+            if request_id is None and isinstance(result, RPCError):
+                raise ProtocolWarning(f'diagnostic error received: {result}')
+            else:
+                raise ProtocolWarning(f'response to unsent request: {result}')
         request, event = self._requests.pop(request_id)
-        event.result = response.result
+        event.result = result
         event.set()
         return []
 
@@ -630,7 +640,7 @@ class JSONRPCConnection(object):
         ordered = sorted(zip(request_ids, results), key=lambda t: t[0])
         ordered_ids, ordered_results = zip(*ordered)
         if ordered_ids not in self._requests:
-            raise ProtocolError.invalid_request(
+            raise ProtocolWarning(
                 f'response to unsent batch: {response_batch!r}')
         request_batch, event = self._requests.pop(ordered_ids)
         event.result = ordered_results
@@ -684,7 +694,7 @@ class JSONRPCConnection(object):
         send_request() event that caused the error.
 
         Raises: ProtocolError if the message violates the protocol in
-        some way.
+        some way.  ProtocolWarning.
         '''
         item, request_id = self._protocol.message_to_item(message)
         if isinstance(item, Request):

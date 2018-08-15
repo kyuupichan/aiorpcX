@@ -165,6 +165,8 @@ class SessionBase(asyncio.Protocol):
 
                 try:
                     requests = self.connection.receive_message(item)
+                except ProtocolWarning as e:
+                    self.logger.error(f'{e}')
                 except ProtocolError as e:
                     self.logger.error(f'{e!r}')
                 else:

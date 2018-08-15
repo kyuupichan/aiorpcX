@@ -749,10 +749,23 @@ async def test_receive_message_unmatched_response(protocol):
     '''
     connection = JSONRPCConnection(protocol)
 
-    for request_id in (1, None):
-        response = protocol.response_message(1, request_id)
-        with raises_invalid_request('response to unsent request'):
-            await connection.receive_message(response)
+    message = protocol.response_message(12345, 1)
+    with pytest.raises(ProtocolWarning) as e:
+        await connection.receive_message(message)
+    assert 'response to unsent request' in e.value.args[0]
+    assert '12345' in e.value.args[0]
+
+    message = protocol.response_message(1, None)
+    with pytest.raises(ProtocolWarning) as e:
+        await connection.receive_message(message)
+    assert 'response to unsent request' in e.value.args[0]
+
+    error = RPCError(1, 'messed up')
+    message = protocol.response_message(error, None)
+    with pytest.raises(ProtocolWarning) as e:
+        await connection.receive_message(message)
+    assert 'diagnostic error received' in e.value.args[0]
+    assert 'messed up' in e.value.args[0]
 
 
 @pytest.mark.asyncio
@@ -900,8 +913,9 @@ async def test_batch_fails(batch_protocol):
         # Send a batch response we didn't get
         parts = [protocol.response_message(2, "bad_id")]
         fake_message = protocol.batch_message_from_parts(parts)
-        with RaiseTest(JSONRPC.INVALID_REQUEST, 'unsent batch', ProtocolError):
+        with pytest.raises(ProtocolWarning) as e:
             connection.receive_message(fake_message)
+        assert 'response to unsent batch' in e.value.args[0]
         assert connection.pending_requests() == [batch]
 
         # Send a batch with a duplicate response
@@ -909,8 +923,9 @@ async def test_batch_fails(batch_protocol):
         parts = [protocol.response_message(2, data[0]['id'])] * 2
         fake_message = protocol.batch_message_from_parts(parts)
 
-        with RaiseTest(JSONRPC.INVALID_REQUEST, 'unsent batch', ProtocolError):
-            connection.receive_message(fake_message)
+        with pytest.raises(ProtocolWarning) as e:
+            await connection.receive_message(fake_message)
+        assert 'response to unsent batch' in e.value.args[0]
 
     async with TaskGroup() as group:
         await group.spawn(receive_request)
