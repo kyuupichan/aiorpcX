@@ -1,6 +1,4 @@
-from asyncio import (
-    sleep, CancelledError, get_event_loop, Event, InvalidStateError
-)
+from asyncio import get_event_loop, InvalidStateError
 import time
 
 import pytest
@@ -16,6 +14,15 @@ async def return_value(x, secs=0):
     if secs:
         await sleep(secs)
     return x
+
+
+# Test exports
+sleep
+CancelledError
+Event
+Lock
+Queue
+Semaphore
 
 
 @pytest.mark.asyncio

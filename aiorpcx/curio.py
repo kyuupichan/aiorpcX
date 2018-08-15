@@ -38,7 +38,8 @@
 
 import logging
 from asyncio import (
-    CancelledError, get_event_loop, Queue, Event, sleep, Task
+    CancelledError, get_event_loop, Queue, Event, Lock, Semaphore,
+    sleep, Task
 )
 from collections import deque
 from contextlib import suppress
@@ -48,7 +49,7 @@ from aiorpcx.util import normalize_corofunc, check_task
 
 
 __all__ = (
-    'Queue', 'Event', 'sleep', 'CancelledError',
+    'Queue', 'Event', 'Lock', 'Semaphore', 'sleep', 'CancelledError',
     'run_in_thread', 'spawn', 'spawn_sync',
     'TaskGroupError', 'TaskGroup',
     'TaskTimeout', 'TimeoutCancellationError', 'UncaughtTimeoutError',
