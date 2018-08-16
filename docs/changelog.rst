@@ -4,6 +4,14 @@ ChangeLog
 .. note:: The aiorpcX API changed quite a bit for version 0.6 and
           is still unstable
 
+Version 0.7.2 (16 Aug 2018)
+---------------------------
+
+* Restore batch functionality in Session class
+* Less verbose logging
+* Increment and test error count on protocol errors
+* fix `#4`_
+
 Version 0.7.1 (09 Aug 2018)
 ---------------------------
 
@@ -65,3 +73,4 @@ Version 0.5.6
   cancelled, which does not give an informative error message.
 
 .. _#3: https://github.com/kyuupichan/aiorpcX/issues/3
+.. _#4: https://github.com/kyuupichan/aiorpcX/issues/4
