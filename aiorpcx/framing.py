@@ -97,5 +97,5 @@ class NewlineFramer(FramerBase):
             parts.clear()
             if not self.synchronizing:
                 self.synchronizing = True
-                raise MemoryError(f'dropping message over {self.max_size} '
-                                  ' and re-synchronizing')
+                raise MemoryError(f'dropping message over {self.max_size:,d} '
+                                  'bytes and re-synchronizing')

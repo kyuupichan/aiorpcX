@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 from contextlib import suppress
 from functools import partial
@@ -45,17 +46,8 @@ class MyServerSession(ServerSession):
         await asyncio.sleep(10)
 
 
-class MyLogger(object):
-
-    def __init__(self):
-        self.debugs = []
-        self.warnings = []
-
-    def debug(self, msg, **kwargs):
-        self.debugs.append(msg)
-
-    def warning(self, msg, **kwargs):
-        self.warnings.append(msg)
+def in_caplog(caplog, message):
+    return any(message in record.message for record in caplog.records)
 
 
 # This runs all the tests one with plain asyncio, then again with uvloop
@@ -140,8 +132,7 @@ class TestClientSession:
         async with ClientSession('localhost', server.port) as client:
             # A request not a notification so we don't exit immediately
             await client.send_request('unexpected_response')
-        assert any('unsent request' in record.message
-                   for record in caplog.records)
+        assert in_caplog(caplog, 'unsent request')
 
     @pytest.mark.asyncio
     async def test_send_request_bad_args(self, server):
@@ -182,27 +173,28 @@ class TestClientSession:
         assert not client.transport
 
     @pytest.mark.asyncio
-    async def test_verbose_logging(self, server):
+    async def test_verbose_logging(self, server, caplog):
         async with ClientSession('localhost', server.port) as client:
-            client.logger = MyLogger()
             client.verbosity = 4
-            request = await client.send_request('echo', ['wait'])
-            assert len(client.logger.debugs) == 2
+            with caplog.at_level(logging.DEBUG):
+                await client.send_request('echo', ['wait'])
+            assert in_caplog(caplog, "Sending framed message b'{")
+            assert in_caplog(caplog, "Received framed message b'{")
 
     @pytest.mark.asyncio
-    async def test_framer_MemoryError(self, server):
+    async def test_framer_MemoryError(self, server, caplog):
         framer = NewlineFramer(5)
         async with ClientSession('localhost', server.port,
                                  framer=framer) as client:
-            client.logger = MyLogger()
             msg = 'w' * 50
             raw_msg = msg.encode()
             # Even though long it will be sent in one bit
             request = client.send_request('echo', [msg])
             assert await request == msg
-            assert not client.logger.warnings
+            assert not caplog.records
             client.data_received(raw_msg)  # Unframed; no \n
-            assert len(client.logger.warnings) == 1
+            assert len(caplog.records) == 1
+            assert in_caplog(caplog, 'dropping message over 5 bytes')
 
     @pytest.mark.asyncio
     async def test_peer_address(self, server):
