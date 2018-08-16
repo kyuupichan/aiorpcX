@@ -101,12 +101,9 @@ class BatchRequest(object):
             message, event = self._session.connection.send_batch(self.batch)
             self._session._send_messages((message, ), framed=False)
             await event.wait()
-            result = event.result
-            if isinstance(result, Exception):  # A ProtocolError
-                raise result
-            self.results = result
+            self.results = event.result
             if self._raise_errors:
-                if any(isinstance(item, Exception) for item in result):
+                if any(isinstance(item, Exception) for item in event.result):
                     raise BatchError(self)
 
 
@@ -165,12 +162,13 @@ class SessionBase(asyncio.Protocol):
 
                 try:
                     requests = self.connection.receive_message(item)
-                except ProtocolWarning as e:
-                    self.logger.error(f'{e}')
-                    self.errors += 1
                 except ProtocolError as e:
-                    # FIXME - send a response
+                    self.logger.debug(f'{e}')
                     self.errors += 1
+                    if e.code == JSONRPC.PARSE_ERROR:
+                        self.close_after_send = True
+                    if e.error_message:
+                        self._send_messages((e.error_message, ), framed=False)
                 else:
                     for request in requests:
                         await group.spawn(self._throttled_request(request))

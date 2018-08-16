@@ -27,7 +27,7 @@
 
 __all__ = ('JSONRPC', 'JSONRPCv1', 'JSONRPCv2', 'JSONRPCLoose',
            'JSONRPCAutoDetect', 'Request', 'Notification', 'Batch',
-           'RPCError', 'ProtocolError', 'ProtocolWarning',
+           'RPCError', 'ProtocolError',
            'JSONRPCConnection', 'handler_invocation')
 
 import itertools
@@ -139,13 +139,15 @@ class RPCError(CodeMessageError):
 
 
 class ProtocolError(CodeMessageError):
-    pass
 
-
-class ProtocolWarning(Exception):
-    '''Raised if a message is received that might warrant logging
-    in the client for debugging purposes.'''
-    pass
+    def __init__(self, code, message):
+        super().__init__(code, message)
+        # If not None send this unframed message over the network
+        self.error_message = None
+        # If the error was in a JSON response message; its message ID.
+        # Since None can be a response message ID, "id" means the
+        # error was not sent in a JSON response
+        self.response_msg_id = id
 
 
 class JSONRPC(object):
@@ -186,20 +188,6 @@ class JSONRPC(object):
         raise NotImplementedError
 
     @classmethod
-    def _process_batch(cls, batch):
-        if not batch:
-            return ProtocolError.empty_batch(), None
-
-        if any(isinstance(payload, dict) and 'method' in payload
-               for payload in batch):
-            processor = cls._process_request
-        else:
-            processor = cls._process_response
-
-        items, ids = list(zip(*(processor(payload) for payload in batch)))
-        return Batch(items), ids
-
-    @classmethod
     def _process_request(cls, payload):
         request_id = None
         try:
@@ -210,9 +198,10 @@ class JSONRPC(object):
                 item = Notification(method, cls._request_args(payload))
             else:
                 item = Request(method, cls._request_args(payload))
+            return item, request_id
         except ProtocolError as error:
-            item = error
-        return item, request_id
+            code, message = error.code, error.message
+        raise cls._error(code, message, True, request_id)
 
     @classmethod
     def _process_response(cls, payload):
@@ -220,21 +209,30 @@ class JSONRPC(object):
         try:
             request_id = cls._message_id(payload, True)
             cls._validate_message(payload)
-            value = cls.response_value(payload)
+            return Response(cls.response_value(payload)), request_id
         except ProtocolError as error:
-            value = error
-        return Response(value), request_id
+            code, message = error.code, error.message
+        raise cls._error(code, message, False, request_id)
 
     @classmethod
     def _message_to_payload(cls, message):
         '''Returns a Python object or a ProtocolError.'''
         try:
             return json.loads(message.decode())
-        except UnicodeDecodeError as e:
-            return ProtocolError(cls.PARSE_ERROR,
-                                 f'messages must be encoded in UTF-8: {e!r}')
-        except json.JSONDecodeError as e:
-            return ProtocolError(cls.PARSE_ERROR, f'cannot decode JSON: {e!r}')
+        except UnicodeDecodeError:
+            message = 'messages must be encoded in UTF-8'
+        except json.JSONDecodeError:
+            message = 'invalid JSON'
+        raise cls._error(cls.PARSE_ERROR, message, True, None)
+
+    @classmethod
+    def _error(cls, code, message, send, msg_id):
+        error = ProtocolError(code, message)
+        if send:
+            error.error_message = cls.response_message(error, msg_id)
+        else:
+            error.response_msg_id = msg_id
+        return error
 
     #
     # External API
@@ -245,8 +243,7 @@ class JSONRPC(object):
         '''Translate an unframed received message and return an
         (item, request_id) pair.
 
-        The item can be a Request, Notification, Response, Batch or
-        ProtocolError.
+        The item can be a Request, Notification, Response or a list.
 
         A JSON RPC error response is returned as an RPCError inside a
         Response object.
@@ -261,8 +258,7 @@ class JSONRPC(object):
         code can mark a request as having been responded to even if
         the response was bad.
 
-        This routine raises no exceptions.
-
+        raises: ProtocolError
         '''
         payload = cls._message_to_payload(message)
         if isinstance(payload, dict):
@@ -271,11 +267,12 @@ class JSONRPC(object):
             else:
                 return cls._process_response(payload)
         elif isinstance(payload, list) and cls.allow_batches:
-            return cls._process_batch(payload)
-        elif isinstance(payload, ProtocolError):
+            if not payload:
+                raise cls._error(JSONRPC.INVALID_REQUEST, 'batch is empty',
+                                 True, None)
             return payload, None
-        return ProtocolError.invalid_request(
-            'request object must be a dictionary'), None
+        raise cls._error(cls.INVALID_REQUEST,
+                         'request object must be a dictionary', True, None)
 
     # Message formation
     @classmethod
@@ -293,7 +290,7 @@ class JSONRPC(object):
     @classmethod
     def response_message(cls, result, request_id):
         '''Convert a response result (or RPCError) to a message.'''
-        if isinstance(result, RPCError):
+        if isinstance(result, CodeMessageError):
             payload = cls.error_payload(result, request_id)
         else:
             payload = cls.response_payload(result, request_id)
@@ -603,45 +600,65 @@ class JSONRPCConnection(object):
         error = RPCError.invalid_request(text)
         return self._protocol.response_message(error, request_id)
 
-    def _receive_response(self, response, request_id):
-        result = response.result
+    def _receive_response(self, result, request_id):
         if request_id not in self._requests:
             if request_id is None and isinstance(result, RPCError):
-                raise ProtocolWarning(f'diagnostic error received: {result}')
+                message = f'diagnostic error received: {result}'
             else:
-                raise ProtocolWarning(f'response to unsent request: {result}')
+                message = f'response to unsent request (ID: {request_id})'
+            raise ProtocolError.invalid_request(message) from None
         request, event = self._requests.pop(request_id)
         event.result = result
         event.set()
         return []
 
-    def _receive_request_batch(self, batch, request_ids):
+    def _receive_request_batch(self, payloads):
         def item_send_result(request_id, result):
             nonlocal size
-            part = self._protocol.response_message(result, request_id)
+            part = protocol.response_message(result, request_id)
             size += len(part) + 2
             if size > self.max_response_size > 0:
                 part = self._oversized_response_message(request_id)
             parts.append(part)
             if len(parts) == count:
-                return self._protocol.batch_message_from_parts(parts)
+                return protocol.batch_message_from_parts(parts)
             return None
 
         parts = []
+        items = []
         size = 0
-        count = sum(isinstance(item, Request) for item in batch)
-        for item, request_id in zip(batch, request_ids):
-            if isinstance(item, Request):
-                item.send_result = partial(item_send_result, request_id)
-        return batch.items
+        count = 0
+        protocol = self._protocol
+        for payload in payloads:
+            try:
+                item, request_id = protocol._process_request(payload)
+                items.append(item)
+                if isinstance(item, Request):
+                    count += 1
+                    item.send_result = partial(item_send_result, request_id)
+            except ProtocolError as error:
+                count += 1
+                parts.append(error.error_message)
 
-    def _receive_response_batch(self, response_batch, request_ids):
-        results = [response.result for response in response_batch]
+        if not items and parts:
+            error = ProtocolError(0, "")
+            error.error_message = protocol.batch_message_from_parts(parts)
+            raise error
+        return items
+
+    def _receive_response_batch(self, payloads):
+        request_ids = []
+        results = []
+        for payload in payloads:
+            # Let ProtocolError exceptions through
+            item, request_id = self._protocol._process_response(payload)
+            request_ids.append(request_id)
+            results.append(item.result)
+
         ordered = sorted(zip(request_ids, results), key=lambda t: t[0])
         ordered_ids, ordered_results = zip(*ordered)
         if ordered_ids not in self._requests:
-            raise ProtocolWarning(
-                f'response to unsent batch: {response_batch!r}')
+            raise ProtocolError.invalid_request('response to unsent batch')
         request_batch, event = self._requests.pop(ordered_ids)
         event.result = ordered_results
         event.set()
@@ -688,29 +705,32 @@ class JSONRPCConnection(object):
     def receive_message(self, message):
         '''Call with an unframed message received from the network.
 
-        If a response cannot be paired with a request, raise a
-        ProtocolError.  Otherwise any protocol violations in the
-        response are instead set in result attribute of the
-        send_request() event that caused the error.
-
         Raises: ProtocolError if the message violates the protocol in
-        some way.  ProtocolWarning.
+        some way.  However, if it happened in a response that can be
+        paired with a request, the ProtocolError is instead set in the
+        result attribute of the send_request() that caused the error.
         '''
-        item, request_id = self._protocol.message_to_item(message)
+        try:
+            item, request_id = self._protocol.message_to_item(message)
+        except ProtocolError as e:
+            if e.response_msg_id is not id:
+                return self._receive_response(e, e.response_msg_id)
+            raise
+
         if isinstance(item, Request):
             item.send_result = partial(self._send_result, request_id)
             return [item]
         if isinstance(item, Notification):
             return [item]
         if isinstance(item, Response):
-            return self._receive_response(item, request_id)
-        if isinstance(item, Batch):
-            if isinstance(item.items[0], SingleRequest):
-                return self._receive_request_batch(item, request_id)
+            return self._receive_response(item.result, request_id)
+        if isinstance(item, list):
+            if all(isinstance(payload, dict)
+                   and ('result' in payload or 'error' in payload)
+                   for payload in item):
+                return self._receive_response_batch(item)
             else:
-                return self._receive_response_batch(item, request_id)
-        elif isinstance(item, ProtocolError):
-            raise item
+                return self._receive_request_batch(item)
         else:
             # Protocol auto-detection hack
             assert issubclass(item, JSONRPC)
