@@ -43,7 +43,7 @@ class MyServerSession(ServerSession):
         raise ValueError
 
     async def on_sleepy(self):
-        await asyncio.sleep(10)
+        await sleep(10)
 
 
 def in_caplog(caplog, message):
@@ -156,8 +156,21 @@ class TestClientSession:
                 async with timeout_after(0.1):
                     await client.send_request('sleepy')
         # Assert the server doesn't treat cancellation as an error
-        await asyncio.sleep(0.001)
+        await sleep(0.001)
         assert server_session.errors == 0
+
+    @pytest.mark.asyncio
+    async def test_send_ill_formed(self, server):
+        async with ClientSession('localhost', server.port) as client:
+            server_session = MyServerSession.current_server
+            server_session.max_errors = 1
+            client._send_messages((b'', ), framed=False)
+            await sleep(0.002)
+            assert server_session.errors == 1
+            # Check we got cut-off
+            assert client.is_closing()
+        await sleep(0.001)
+        #assert 0
 
     @pytest.mark.asyncio
     async def test_send_notification(self, server):
