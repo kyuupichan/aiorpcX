@@ -167,11 +167,15 @@ class SessionBase(asyncio.Protocol):
                     requests = self.connection.receive_message(item)
                 except ProtocolWarning as e:
                     self.logger.error(f'{e}')
+                    self.errors += 1
                 except ProtocolError as e:
-                    self.logger.error(f'{e!r}')
+                    # FIXME - send a response
+                    self.errors += 1
                 else:
                     for request in requests:
                         await group.spawn(self._throttled_request(request))
+                if self.errors >= self.max_errors:
+                    self.transport.close()
                 if n % 10 == 0:
                     await self._update_concurrency()
 
