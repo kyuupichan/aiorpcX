@@ -266,14 +266,12 @@ class SessionBase(asyncio.Protocol):
 
     def pause_writing(self):
         '''Transport calls when the send buffer is full.'''
-        self.logger.info('pausing whilst socket drains')
         self.paused = True
         self.transport.pause_reading()
 
     def resume_writing(self):
         '''Transport calls when the send buffer has room.'''
         if self.paused:
-            self.logger.info('resuming processing')
             self.paused = False
             self.transport.resume_reading()
             self._send_messages(self.paused_messages, framed=True)
