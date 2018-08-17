@@ -4,6 +4,11 @@ ChangeLog
 .. note:: The aiorpcX API changed quite a bit for version 0.6 and
           is still unstable
 
+Version 0.7.3 (17 Aug 2018)
+---------------------------
+
+* fix `#5`_; more tests added
+
 Version 0.7.2 (16 Aug 2018)
 ---------------------------
 
