@@ -39,4 +39,5 @@ class RaiseTest(object):
         if self.message:
             assert self.message in exc_value.message, \
                 f'{self.message} not in {exc_value.message}'
+        self.value = exc_value
         return True

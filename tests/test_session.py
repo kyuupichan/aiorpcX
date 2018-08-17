@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import time
 from contextlib import suppress
@@ -28,9 +29,8 @@ class MyServerSession(ServerSession):
         invocation = handler_invocation(handler, request)
         return await invocation()
 
-    async def on_unexpected_response(self):
-        # Send an unexpected response
-        message = self.connection._protocol.response_message(-1, -1)
+    async def on_send_bad_response(self, response):
+        message = json.dumps(response).encode()
         self._send_messages((message, ), framed=False)
 
     async def on_echo(self, value):
@@ -131,7 +131,9 @@ class TestClientSession:
     async def test_unexpected_response(self, server, caplog):
         async with ClientSession('localhost', server.port) as client:
             # A request not a notification so we don't exit immediately
-            await client.send_request('unexpected_response')
+            response = {"jsonrpc": "2.0", "result": 2, "id": -1}
+            with caplog.at_level(logging.DEBUG):
+                await client.send_request('send_bad_response', (response, ))
         assert in_caplog(caplog, 'unsent request')
 
     @pytest.mark.asyncio
@@ -169,8 +171,6 @@ class TestClientSession:
             assert server_session.errors == 1
             # Check we got cut-off
             assert client.is_closing()
-        await sleep(0.001)
-        #assert 0
 
     @pytest.mark.asyncio
     async def test_send_notification(self, server):
@@ -360,6 +360,165 @@ class TestClientSession:
             with RaiseTest(JSONRPC.METHOD_NOT_FOUND, 'string', ProtocolError):
                 async with client.send_batch() as batch:
                     batch.add_request(23)
+
+
+class MyClientSession(ClientSession):
+    # For tests of wire messages
+    def connection_made(self, transport):
+        super().connection_made(transport)
+        self.pm_task.cancel()
+
+    def send(self, item):
+        if not isinstance(item, str):
+            item = json.dumps(item)
+        item = item.encode()
+        self._send_messages((item, ), framed=False)
+
+    async def response(self):
+        message = await self.work_queue.get()
+        return json.loads(message.decode())
+
+
+class TestWireResponses(object):
+    # These tests are similar to those in the JSON RPC v2 specification
+
+    @pytest.mark.asyncio
+    async def test_send_request(self, server):
+        async with MyClientSession('localhost', server.port) as client:
+            item = {"jsonrpc": "2.0", "method": "echo", "params": [[42, 43]],
+                    "id": 1}
+            client.send(item)
+            assert await client.response() == {"jsonrpc": "2.0",
+                                               "result": [42, 43], "id": 1}
+
+    @pytest.mark.asyncio
+    async def test_send_request_named(self, server):
+        async with MyClientSession('localhost', server.port) as client:
+            item = {"jsonrpc": "2.0", "method": "echo", "params":
+                    {"value" : [42, 43]}, "id": 3}
+            client.send(item)
+            assert await client.response() == {"jsonrpc": "2.0",
+                                               "result": [42, 43], "id": 3}
+
+    @pytest.mark.asyncio
+    async def test_send_notification(self, server):
+        async with MyClientSession('localhost', server.port) as client:
+            item = {"jsonrpc": "2.0", "method": "echo", "params": [[42, 43]]}
+            client.send(item)
+            with pytest.raises(TaskTimeout):
+                async with timeout_after(0.002):
+                    await client.response()
+
+    @pytest.mark.asyncio
+    async def test_send_non_existent_notification(self, server):
+        async with MyClientSession('localhost', server.port) as client:
+            item = {"jsonrpc": "2.0", "method": "zz", "params": [[42, 43]]}
+            client.send(item)
+            with pytest.raises(TaskTimeout):
+                async with timeout_after(0.002):
+                    await client.response()
+
+    @pytest.mark.asyncio
+    async def test_send_non_existent_method(self, server):
+        async with MyClientSession('localhost', server.port) as client:
+            item = {"jsonrpc": "2.0", "method": "foobar", "id": 0}
+            client.send(item)
+            assert await client.response() == {
+                "jsonrpc": "2.0", "id": 0, "error":
+                {'code': -32601, 'message': 'unknown method "foobar"'}}
+
+    @pytest.mark.asyncio
+    async def test_send_invalid_json(self, server):
+        async with MyClientSession('localhost', server.port) as client:
+            item = '{"jsonrpc": "2.0", "method": "foobar, "params": "bar", "b]'
+            client.send(item)
+            assert await client.response() == {
+                "jsonrpc": "2.0", "error":
+                {"code": -32700, "message": "invalid JSON"}, "id": None}
+
+    @pytest.mark.asyncio
+    async def test_send_invalid_request_object(self, server):
+        async with MyClientSession('localhost', server.port) as client:
+            item = {"jsonrpc": "2.0", "method": 1, "params": "bar"}
+            client.send(item)
+            assert await client.response() == {
+                "jsonrpc": "2.0", "id": None,
+                "error": {"code": -32602, "message":
+                          "invalid request arguments: bar"}}
+
+    @pytest.mark.asyncio
+    async def test_send_batch_invalid_json(self, server):
+        async with MyClientSession('localhost', server.port) as client:
+            item = ('[{"jsonrpc": "2.0", "method": "sum", "params": [1,2,4],'
+                    '"id": "1"}, {"jsonrpc": "2.0", "method"  ]')
+            client.send(item)
+            assert await client.response() == {
+                "jsonrpc": "2.0", "id": None,
+                "error": {"code": -32700, "message": "invalid JSON"}}
+
+    @pytest.mark.asyncio
+    async def test_send_empty_batch(self, server):
+        async with MyClientSession('localhost', server.port) as client:
+            item = []
+            client.send(item)
+            assert await client.response() == {
+                "jsonrpc": "2.0", "id": None,
+                "error": {"code": -32600, "message": "batch is empty"}}
+
+    @pytest.mark.asyncio
+    async def test_send_invalid_batch(self, server):
+        async with MyClientSession('localhost', server.port) as client:
+            item = [1]
+            client.send(item)
+            assert await client.response() == [{
+                "jsonrpc": "2.0", "id": None,
+                "error": {"code": -32600, "message":
+                          "request object must be a dictionary"}}]
+
+    @pytest.mark.asyncio
+    async def test_send_invalid_batch_3(self, server):
+        async with MyClientSession('localhost', server.port) as client:
+            item = [1, 2, 3]
+            client.send(item)
+            assert await client.response() == [{
+                "jsonrpc": "2.0", "id": None,
+                "error": {"code": -32600, "message":
+                          "request object must be a dictionary"}}] * 3
+
+    @pytest.mark.asyncio
+    async def test_send_partly_invalid_batch(self, server):
+        async with MyClientSession('localhost', server.port) as client:
+            item = [1, {"jsonrpc": "2.0", "method": "echo", "params": [42],
+                        "id": 0}]
+            client.send(item)
+            assert await client.response() == [
+                { "jsonrpc": "2.0", "id": None,
+                  "error": {"code": -32600, "message":
+                            "request object must be a dictionary"}},
+                {"jsonrpc": "2.0", "result": 42, "id": 0}]
+
+    @pytest.mark.asyncio
+    async def test_send_mixed_batch(self, server):
+        async with MyClientSession('localhost', server.port) as client:
+            item = [
+                {"jsonrpc": "2.0", "method": "echo", "params": [40], "id": 3},
+                {"jsonrpc": "2.0", "method": "echo", "params": [42]},
+                {"jsonrpc": "2.0", "method": "echo", "params": [41], "id": 2}
+            ]
+            client.send(item)
+            assert await client.response() == [
+                {"jsonrpc": "2.0", "result": 40, "id": 3},
+                {"jsonrpc": "2.0", "result": 41, "id": 2}
+            ]
+
+    @pytest.mark.asyncio
+    async def test_send_notification_batch(self, server):
+        async with MyClientSession('localhost', server.port) as client:
+            item = [{"jsonrpc": "2.0", "method": "echo", "params": [42]}] * 2
+            client.send(item)
+            with pytest.raises(TaskTimeout):
+                async with timeout_after(0.002):
+                    assert await client.response()
 
 
 @pytest.mark.asyncio
