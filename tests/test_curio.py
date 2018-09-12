@@ -336,29 +336,17 @@ class MyLogger(object):
 
 
 @pytest.mark.asyncio
-async def test_logging():
+async def test_logging(caplog):
     for report_crash in (True, False):
-        # constructor
-        task = await spawn(raises(ValueError))
-        t = TaskGroup([task], report_crash=report_crash)
-        t._logger = MyLogger()
-        assert await t.next_done() == task
-        assert t._logger.logged == report_crash
-
         # spawn
-        t = TaskGroup()
-        t._logger = MyLogger()
-        task = await t.spawn(raises(ValueError), report_crash=report_crash)
-        assert await t.next_done() == task
-        assert t._logger.logged == report_crash
+        task = await spawn(raises(ValueError), report_crash=report_crash)
+        try:
+            await task
+            assert False
+        except ValueError:
+            pass
 
-        # add_task
-        t = TaskGroup()
-        t._logger = MyLogger()
-        task = await spawn(raises(ValueError))
-        await t.add_task(task, report_crash=report_crash)
-        assert await t.next_done() == task
-        assert t._logger.logged == report_crash
+    assert any('ValueError' in record.message for record in caplog.records)
 
 
 async def raises(exc):

@@ -91,7 +91,7 @@ class TaskGroup(object):
     TaskGroup constructor (but not in the join method)`.
     '''
 
-    def __init__(self, tasks=(), *, wait=all, report_crash=True):
+    def __init__(self, tasks=(), *, wait=all):
         self._done = deque()
         self._pending = set()
         self._wait = wait
@@ -100,9 +100,9 @@ class TaskGroup(object):
         self._closed = False
         self.completed = None
         for task in tasks:
-            self._add_task(task, report_crash)
+            self._add_task(task)
 
-    def _add_task(self, task, report_crash):
+    def _add_task(self, task):
         '''Add an already existing task to the task group.'''
         if hasattr(task, '_task_group'):
             raise RuntimeError('task is already part of a group')
@@ -112,7 +112,6 @@ class TaskGroup(object):
         if task.done():
             self._done.append(task)
         else:
-            task._report_crash = report_crash
             self._pending.add(task)
             task.add_done_callback(self._on_done)
 
@@ -127,21 +126,18 @@ class TaskGroup(object):
                     pass
                 else:
                     self.completed = task
-        if task._report_crash:
-            check_task(self._logger, task)
 
-    async def spawn(self, coro, *args, report_crash=True):
+    async def spawn(self, coro, *args):
         '''Create a new task that’s part of the group. Returns a Task
-        instance. The report_crash flag controls whether a traceback
-        is logged when a task exits with an uncaught exception.
+        instance.
         '''
-        task = await spawn(coro, *args)
-        self._add_task(task, report_crash=report_crash)
+        task = await spawn(coro, *args, report_crash=False)
+        self._add_task(task)
         return task
 
-    async def add_task(self, task, *, report_crash=True):
+    async def add_task(self, task):
         '''Add an already existing task to the task group.'''
-        self._add_task(task, report_crash)
+        self._add_task(task)
 
     async def next_done(self):
         '''Returns the next completed task.  Returns None if no more tasks
