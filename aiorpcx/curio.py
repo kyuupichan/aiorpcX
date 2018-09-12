@@ -135,7 +135,7 @@ class TaskGroup(object):
         instance. The report_crash flag controls whether a traceback
         is logged when a task exits with an uncaught exception.
         '''
-        task = await spawn(coro, *args)
+        task = await spawn(coro, *args, report_crash=report_crash)
         self._add_task(task, report_crash=report_crash)
         return task
 
