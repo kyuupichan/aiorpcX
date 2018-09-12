@@ -50,8 +50,7 @@ from aiorpcx.util import normalize_corofunc, check_task
 
 __all__ = (
     'Queue', 'Event', 'Lock', 'Semaphore', 'sleep', 'CancelledError',
-    'run_in_thread', 'spawn', 'spawn_sync',
-    'TaskGroupError', 'TaskGroup',
+    'run_in_thread', 'spawn', 'spawn_sync', 'TaskGroup',
     'TaskTimeout', 'TimeoutCancellationError', 'UncaughtTimeoutError',
     'timeout_after', 'timeout_at', 'ignore_after', 'ignore_at',
 )
@@ -73,25 +72,6 @@ def spawn_sync(coro, *args, loop=None, report_crash=True):
     if report_crash:
         task.add_done_callback(partial(check_task, logging))
     return task
-
-
-class TaskGroupError(Exception):
-    '''
-    Raised if one or more tasks in a task group raised an error.
-    The .failed attribute contains a list of all tasks that died.
-    The .errors attribute contains a set of all exceptions raised.
-    '''
-    def __init__(self, failed):
-        self.args = (failed,)
-        self.failed = failed
-        self.errors = {type(task.exception()) for task in failed}
-
-    def __str__(self):
-        errors = ', '.join(err.__name__ for err in self.errors)
-        return f'TaskGroupError({errors})'
-
-    def __iter__(self):
-        return self.failed.__iter__()
 
 
 class TaskGroup(object):
@@ -193,12 +173,12 @@ class TaskGroup(object):
         If wait is any then wait for any task to complete and cancel
         remaining tasks.
 
-        If wait is object, then wait for any task to complete and
-        return a non-None object.
+        If wait is object, then wait for any task to complete by
+        returning a non-None object.
 
-        While doing the above, if any task raises an error, then all
-        remaining tasks are immediately cancelled and a TaskGroupError
-        exception is raised.
+        While doing the above, if any task raises an exception other
+        than a CancelledError, then all remaining tasks are cancelled
+        and that exception is propogated.
 
         If the join() operation itself is cancelled, all remaining
         tasks in the group are also cancelled.
@@ -234,10 +214,8 @@ class TaskGroup(object):
             await self.cancel_remaining()
             self._closed = True
 
-        bad_tasks = [task]
-        bad_tasks.extend(task for task in self._done if errored(task))
-        if bad_tasks:
-            raise TaskGroupError(bad_tasks)
+        if errored(task):
+            raise task.exception()
 
     async def cancel_remaining(self):
         '''Cancel all remaining tasks.'''
