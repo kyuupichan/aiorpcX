@@ -202,6 +202,9 @@ class SessionBase(asyncio.Protocol):
             await self.work_queue.put(None)
 
     async def _update_concurrency(self):
+        # A non-positive value means not to limit concurrency
+        if self.bw_limit <= 0:
+            return
         now = time.time()
         # Reduce the recorded usage in proportion to the elapsed time
         refund = (now - self.bw_time) * (self.bw_limit / 3600)
