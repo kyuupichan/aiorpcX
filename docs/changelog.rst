@@ -4,6 +4,14 @@ ChangeLog
 .. note:: The aiorpcX API changed quite a bit for version 0.6 and
           is still unstable
 
+Version 0.8.0 (12 Sep 2018)
+---------------------------
+
+* change TaskGroup semantics: the first error of a member task is
+  raised by the TaskGroup instead of TaskGroupError (which is now
+  removed).  Code wanting to query the status / results of member
+  tasks should loop on group.next_done().
+
 Version 0.7.3 (17 Aug 2018)
 ---------------------------
 
@@ -79,3 +87,4 @@ Version 0.5.6
 
 .. _#3: https://github.com/kyuupichan/aiorpcX/issues/3
 .. _#4: https://github.com/kyuupichan/aiorpcX/issues/4
+.. _#5: https://github.com/kyuupichan/aiorpcX/issues/5
