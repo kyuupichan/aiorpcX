@@ -4,6 +4,12 @@ ChangeLog
 .. note:: The aiorpcX API changed quite a bit for version 0.6 and
           is still unstable
 
+Version 0.8.1 (12 Sep 2018)
+---------------------------
+
+* remove report_crash arguments from TaskGroup methods
+* ignore bandwidth limits if set <= 0
+
 Version 0.8.0 (12 Sep 2018)
 ---------------------------
 
