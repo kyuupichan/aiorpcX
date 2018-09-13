@@ -407,6 +407,7 @@ class ClientSession(SessionBase):
         self.port = port
         self.kwargs = kwargs
         self.proxy = proxy
+        self.bw_limit = 0
 
     async def create_connection(self):
         '''Initiate a connection.'''

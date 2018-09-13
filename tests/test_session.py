@@ -279,8 +279,9 @@ class TestClientSession:
     @pytest.mark.asyncio
     async def test_concurrency(self, server):
         async with ClientSession('localhost', server.port) as client:
+            client.bw_limit = 1_000_000
             # Test high bw usage crushes concurrency to 1
-            client.bw_charge = 1000 * 1000 * 1000
+            client.bw_charge = 1_000_000_000
             prior_mc = client.concurrency.max_concurrent
             await client._update_concurrency()
             assert 1 == client.concurrency.max_concurrent < prior_mc
