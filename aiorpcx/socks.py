@@ -320,7 +320,8 @@ class SOCKSProxy(object):
             self.peername = sock.getpeername()
             return sock
         except Exception as e:
-            sock.close()
+            # Don't close - see https://github.com/kyuupichan/aiorpcX/issues/8
+            # sock.close()
             return e
 
     async def _connect(self, addresses):
