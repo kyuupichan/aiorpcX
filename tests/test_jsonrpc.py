@@ -3,7 +3,7 @@ import json
 import pytest
 
 from aiorpcx import *
-from aiorpcx.jsonrpc import Response
+from aiorpcx.jsonrpc import Response, CodeMessageError
 from util import RaiseTest, assert_RPCError, assert_ProtocolError
 from random import shuffle
 
@@ -77,6 +77,10 @@ def test_abstract():
 
     with pytest.raises(NotImplementedError):
         MyProtocol._request_args({})
+
+
+def test_exception_is_hashable():
+    hash(CodeMessageError(0, ''))  # see if raises
 
 
 # ENCODING
