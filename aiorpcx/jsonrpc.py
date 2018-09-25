@@ -121,6 +121,11 @@ class CodeMessageError(Exception):
         return (isinstance(other, self.__class__) and
                 self.code == other.code and self.message == other.message)
 
+    def __hash__(self):
+        # overridden to make the exception hashable
+        # see https://bugs.python.org/issue28603
+        return hash((self.code, self.message))
+
     @classmethod
     def invalid_args(cls, message):
         return cls(JSONRPC.INVALID_ARGS, message)
