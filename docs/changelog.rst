@@ -4,6 +4,17 @@ ChangeLog
 .. note:: The aiorpcX API changed quite a bit for version 0.6 and
           is still unstable
 
+Version 0.8.2 (25 Sep 2018)
+---------------------------
+
+* bw_limit defaults to 0 for ClientSession, bandwidth limiting is mainly
+  intended for servers
+* don't close proxy sockets on an exception during the initial SOCKS
+  handshake; see `#8`_.  This works around an asyncio bug still present
+  in Python 3.7
+* make CodeMessageError hashable.  This works around a Python bug fixed
+  somewhere between Python 3.6.4 and 3.6.6
+
 Version 0.8.1 (12 Sep 2018)
 ---------------------------
 

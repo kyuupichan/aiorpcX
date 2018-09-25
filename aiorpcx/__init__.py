@@ -5,7 +5,7 @@ from .socks import *
 from .session import *
 from .util import *
 
-_version = (0, 8, 1)
+_version = (0, 8, 2)
 _version_str = '.'.join(str(part) for part in _version)
 
 __all__ = (curio.__all__ +
