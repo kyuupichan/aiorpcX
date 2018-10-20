@@ -616,11 +616,11 @@ class TestSOCKSProxy(object):
         FakeServer.response = TestSOCKS5.response(chosen_auth,
                                                   'wwww.apple.com')
         proxy = SOCKSProxy(proxy_address, SOCKS5, auth)
-        _, protocol = await proxy.create_connection(ClientSession, *GCOM)
+        _, protocol = await proxy.create_connection(RPCClientSession, *GCOM)
         assert protocol._address == GCOM
         assert protocol._proxy_address == proxy.peername
         assert proxy.peername == ('127.0.0.1', proxy_address[1])
-        assert isinstance(protocol, ClientSession)
+        assert isinstance(protocol, RPCClientSession)
         await protocol.close()
 
     @pytest.mark.asyncio
@@ -629,19 +629,19 @@ class TestSOCKSProxy(object):
         proxy = SOCKSProxy(proxy_address, SOCKS5, auth)
         FakeServer.response = TestSOCKS5.response(chosen_auth,
                                                   'wwww.apple.com')
-        _, protocol = await proxy.create_connection(ClientSession, *GCOM,
+        _, protocol = await proxy.create_connection(RPCClientSession, *GCOM,
                                                     resolve=True)
         assert protocol._address[0] not in (None, GCOM[0])
         assert protocol._address[1] == GCOM[1]
         assert proxy.peername == ('127.0.0.1', proxy_address[1])
-        assert isinstance(protocol, ClientSession)
+        assert isinstance(protocol, RPCClientSession)
         await protocol.close()
 
     @pytest.mark.asyncio
     async def test_create_connection_resolve_bad(self, proxy_address, auth):
         proxy = SOCKSProxy(proxy_address, SOCKS5, auth)
         with pytest.raises(OSError):
-            await proxy.create_connection(ClientSession, 'foobar.onion',
+            await proxy.create_connection(RPCClientSession, 'foobar.onion',
                                           80, resolve=True)
 
     def test_str(self):

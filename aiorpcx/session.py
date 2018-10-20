@@ -24,7 +24,7 @@
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
-__all__ = ('ClientSession', 'ServerSession', 'Server', 'BatchError')
+__all__ = ('RPCClientSession', 'RPCServerSession', 'Server', 'BatchError')
 
 
 import asyncio
@@ -35,6 +35,174 @@ from contextlib import suppress
 
 from aiorpcx import *
 from aiorpcx.util import Concurrency
+
+
+class SessionBase(asyncio.Protocol):
+
+    max_errors = 10
+
+    def __init__(self, framer=None, loop=None):
+        self.framer = framer or self.default_framer()
+        self.loop = loop or asyncio.get_event_loop()
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.transport = None
+        # Concurrency
+        self.max_concurrent = 6
+        # Set when a connection is made
+        self._address = None
+        self._proxy_address = None
+        # For logger.debug messsages
+        self.verbosity = 0
+        # Pausing sends when socket is full
+        self.paused = False
+        self.paused_messages = []
+        # Close once the send queue is exhausted.  An unfortunate hack
+        # necessitated by asyncio's non-blocking socket writes
+        self.close_after_send = False
+        # Statistics.  The RPC object also keeps its own statistics.
+        self.start_time = time.time()
+        self.errors = 0
+        self.send_count = 0
+        self.send_size = 0
+        self.last_send = self.start_time
+        self.recv_count = 0
+        self.recv_size = 0
+        self.last_recv = self.start_time
+        # Bandwidth usage per hour before throttling starts
+        self.bw_limit = 2000000
+        self.bw_time = self.start_time
+        self.bw_charge = 0
+        # Concurrency control
+        self.concurrency = Concurrency(self.max_concurrent)
+        self.work_queue = Queue()
+        self.pm_task = None
+
+    async def _update_concurrency(self):
+        # A non-positive value means not to limit concurrency
+        if self.bw_limit <= 0:
+            return
+        now = time.time()
+        # Reduce the recorded usage in proportion to the elapsed time
+        refund = (now - self.bw_time) * (self.bw_limit / 3600)
+        self.bw_charge = max(0, self.bw_charge - int(refund))
+        self.bw_time = now
+        # Reduce concurrency allocation by 1 for each whole bw_limit used
+        throttle = int(self.bw_charge / self.bw_limit)
+        target = max(1, self.max_concurrent - throttle)
+        current = self.concurrency.max_concurrent
+        if target != current:
+            self.logger.info(f'changing task concurrency from {current} '
+                             f'to {target}')
+            await self.concurrency.set_max_concurrent(target)
+
+    def _using_bandwidth(self, size):
+        '''Called when sending or receiving size bytes.'''
+        self.bw_charge += size
+
+    # asyncio framework
+    def data_received(self, framed_message):
+        '''Called by asyncio when a message comes in.'''
+        if self.verbosity >= 4:
+            self.logger.debug(f'Received framed message {framed_message}')
+        self.recv_size += len(framed_message)
+        self._using_bandwidth(len(framed_message))
+
+        count = 0
+        try:
+            for message in self.framer.messages(framed_message):
+                count += 1
+                self.work_queue.put_nowait(message)
+        except MemoryError as e:
+            self.logger.warning(f'{e!r}')
+
+        if count:
+            self.recv_count += count
+            self.last_recv = time.time()
+
+    def pause_writing(self):
+        '''Transport calls when the send buffer is full.'''
+        self.paused = True
+        self.transport.pause_reading()
+
+    def resume_writing(self):
+        '''Transport calls when the send buffer has room.'''
+        if self.paused:
+            self.paused = False
+            self.transport.resume_reading()
+            self._send_messages(self.paused_messages, framed=True)
+            self.paused_messages.clear()
+
+    def connection_made(self, transport):
+        '''Called by asyncio when a connection is established.
+
+        Derived classes overriding this method must call this first.'''
+        self.transport = transport
+        # This would throw if called on a closed SSL transport.  Fixed
+        # in asyncio in Python 3.6.1 and 3.5.4
+        peer_address = transport.get_extra_info('peername')
+        # If the Socks proxy was used then _address is already set to
+        # the remote address
+        if self._address:
+            self._proxy_address = peer_address
+        else:
+            self._address = peer_address
+        self.pm_task = spawn_sync(self._process_messages(), loop=self.loop)
+
+    def connection_lost(self, exc):
+        '''Called by asyncio when the connection closes.
+
+        Tear down things done in connection_made.'''
+        self._address = None
+        self.transport = None
+        # Cancel pending requests and message processing
+        self.connection.cancel_pending_requests()
+        self.pm_task.cancel()
+        # This helps task release of server sessions as asyncio
+        # doesn't call close() explicitly
+        if not isinstance(self, RPCClientSession):
+            self.pm_task = None
+
+    # External API
+    def default_framer(self):
+        '''Return a default framer.'''
+        raise NotImplementedError
+
+    def peer_address(self):
+        '''Returns the peer's address (Python networking address), or None if
+        no connection or an error.
+
+        This is the result of socket.getpeername() when the connection
+        was made.
+        '''
+        return self._address
+
+    def peer_address_str(self):
+        '''Returns the peer's IP address and port as a human-readable
+        string.'''
+        if not self._address:
+            return 'unknown'
+        ip_addr_str, port = self._address[:2]
+        if ':' in ip_addr_str:
+            return f'[{ip_addr_str}]:{port}'
+        else:
+            return f'{ip_addr_str}:{port}'
+
+    def is_closing(self):
+        '''Return True if the connection is closing.'''
+        return not self.transport or self.transport.is_closing()
+
+    async def close(self, *, force_after=30):
+        '''Close the connection and return when closed.'''
+        if self.transport:
+            self.transport.close()
+        if self.pm_task:
+            task = self.pm_task   # copy as self.pm_task may be set to None
+            with suppress(CancelledError):
+                async with ignore_after(force_after):
+                    await task
+                if self.transport:
+                    self.transport.abort()
+                await task
 
 
 class BatchError(Exception):
@@ -107,46 +275,13 @@ class BatchRequest(object):
                     raise BatchError(self)
 
 
-class SessionBase(asyncio.Protocol):
-
-    max_errors = 10
+class RPCSessionBase(SessionBase):
+    '''Base class for protocols where a message can lead to a response,
+    for example JSON RPC.'''
 
     def __init__(self, connection=None, framer=None, loop=None):
+        super().__init__(framer, loop)
         self.connection = connection or self.default_connection()
-        self.framer = framer or self.default_framer()
-        self.loop = loop or asyncio.get_event_loop()
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.transport = None
-        # Concurrency
-        self.max_concurrent = 6
-        # Set when a connection is made
-        self._address = None
-        self._proxy_address = None
-        # For logger.debug messsages
-        self.verbosity = 0
-        # Pausing sends when socket is full
-        self.paused = False
-        self.paused_messages = []
-        # Close once the send queue is exhausted.  An unfortunate hack
-        # necessitated by asyncio's non-blocking socket writes
-        self.close_after_send = False
-        # Statistics.  The RPC object also keeps its own statistics.
-        self.start_time = time.time()
-        self.errors = 0
-        self.send_count = 0
-        self.send_size = 0
-        self.last_send = self.start_time
-        self.recv_count = 0
-        self.recv_size = 0
-        self.last_recv = self.start_time
-        # Bandwidth usage per hour before throttling starts
-        self.bw_limit = 2000000
-        self.bw_time = self.start_time
-        self.bw_charge = 0
-        # Concurrency control
-        self.concurrency = Concurrency(self.max_concurrent)
-        self.work_queue = Queue()
-        self.pm_task = None
 
     async def _process_messages(self):
         '''Process incoming messages asynchronously.  They are placed
@@ -201,28 +336,6 @@ class SessionBase(asyncio.Protocol):
         finally:
             await self.work_queue.put(None)
 
-    async def _update_concurrency(self):
-        # A non-positive value means not to limit concurrency
-        if self.bw_limit <= 0:
-            return
-        now = time.time()
-        # Reduce the recorded usage in proportion to the elapsed time
-        refund = (now - self.bw_time) * (self.bw_limit / 3600)
-        self.bw_charge = max(0, self.bw_charge - int(refund))
-        self.bw_time = now
-        # Reduce concurrency allocation by 1 for each whole bw_limit used
-        throttle = int(self.bw_charge / self.bw_limit)
-        target = max(1, self.max_concurrent - throttle)
-        current = self.concurrency.max_concurrent
-        if target != current:
-            self.logger.info(f'changing task concurrency from {current} '
-                             f'to {target}')
-            await self.concurrency.set_max_concurrent(target)
-
-    def _using_bandwidth(self, size):
-        '''Called when sending or receiving size bytes.'''
-        self.bw_charge += size
-
     def _send_messages(self, messages, *, framed):
         '''Send messages, an iterable.  Framed is true if they are already
         framed.'''
@@ -245,69 +358,6 @@ class SessionBase(asyncio.Protocol):
             if self.close_after_send or self.errors >= self.max_errors:
                 self.transport.close()
 
-    # asyncio framework
-    def data_received(self, framed_message):
-        '''Called by asyncio when a message comes in.'''
-        if self.verbosity >= 4:
-            self.logger.debug(f'Received framed message {framed_message}')
-        self.recv_size += len(framed_message)
-        self._using_bandwidth(len(framed_message))
-
-        count = 0
-        try:
-            for message in self.framer.messages(framed_message):
-                count += 1
-                self.work_queue.put_nowait(message)
-        except MemoryError as e:
-            self.logger.warning(f'{e!r}')
-
-        if count:
-            self.recv_count += count
-            self.last_recv = time.time()
-
-    def pause_writing(self):
-        '''Transport calls when the send buffer is full.'''
-        self.paused = True
-        self.transport.pause_reading()
-
-    def resume_writing(self):
-        '''Transport calls when the send buffer has room.'''
-        if self.paused:
-            self.paused = False
-            self.transport.resume_reading()
-            self._send_messages(self.paused_messages, framed=True)
-            self.paused_messages.clear()
-
-    def connection_made(self, transport):
-        '''Called by asyncio when a connection is established.
-
-        Derived classes overriding this method must call this first.'''
-        self.transport = transport
-        # This would throw if called on a closed SSL transport.  Fixed
-        # in asyncio in Python 3.6.1 and 3.5.4
-        peer_address = transport.get_extra_info('peername')
-        # If the Socks proxy was used then _address is already set to
-        # the remote address
-        if self._address:
-            self._proxy_address = peer_address
-        else:
-            self._address = peer_address
-        self.pm_task = spawn_sync(self._process_messages(), loop=self.loop)
-
-    def connection_lost(self, exc):
-        '''Called by asyncio when the connection closes.
-
-        Tear down things done in connection_made.'''
-        self._address = None
-        self.transport = None
-        # Cancel pending requests and message processing
-        self.connection.cancel_pending_requests()
-        self.pm_task.cancel()
-        # This helps task release of server sessions as asyncio
-        # doesn't call close() explicitly
-        if not isinstance(self, ClientSession):
-            self.pm_task = None
-
     # External API
     def default_connection(self):
         '''Return a default connection if the user provides none.'''
@@ -319,26 +369,6 @@ class SessionBase(asyncio.Protocol):
 
     async def handle_request(self, request):
         pass
-
-    def peer_address(self):
-        '''Returns the peer's address (Python networking address), or None if
-        no connection or an error.
-
-        This is the result of socket.getpeername() when the connection
-        was made.
-        '''
-        return self._address
-
-    def peer_address_str(self):
-        '''Returns the peer's IP address and port as a human-readable
-        string.'''
-        if not self._address:
-            return 'unknown'
-        ip_addr_str, port = self._address[:2]
-        if ':' in ip_addr_str:
-            return f'[{ip_addr_str}]:{port}'
-        else:
-            return f'{ip_addr_str}:{port}'
 
     async def send_request(self, method, args=()):
         '''Send an RPC request over the network.'''
@@ -371,25 +401,8 @@ class SessionBase(asyncio.Protocol):
         '''
         return BatchRequest(self, raise_errors)
 
-    def is_closing(self):
-        '''Return True if the connection is closing.'''
-        return not self.transport or self.transport.is_closing()
 
-    async def close(self, *, force_after=30):
-        '''Close the connection and return when closed.'''
-        if self.transport:
-            self.transport.close()
-        if self.pm_task:
-            task = self.pm_task   # copy as self.pm_task may be set to None
-            with suppress(CancelledError):
-                async with ignore_after(force_after):
-                    await task
-                if self.transport:
-                    self.transport.abort()
-                await task
-
-
-class ClientSession(SessionBase):
+class RPCClientSession(RPCSessionBase):
     '''A client session.
 
     To initiate a connection to the remote server call
@@ -428,7 +441,7 @@ class ClientSession(SessionBase):
         await self.close()
 
 
-class ServerSession(SessionBase):
+class RPCServerSession(RPCSessionBase):
     '''A server session - created by a listening Server for each incoming
     connection.'''
 
