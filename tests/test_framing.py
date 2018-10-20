@@ -8,13 +8,12 @@ def test_FramerBase():
     with pytest.raises(NotImplementedError):
         framer.messages('')
     with pytest.raises(NotImplementedError):
-        framer.frame([])
+        framer.frame(b'')
 
 
 def test_NewlineFramer_framing():
     framer = NewlineFramer()
-    assert framer.frame([]) == b''
-    assert framer.frame((b'foo', b'bar')) == b'foo\nbar\n'
+    assert framer.frame(b'foo') == b'foo\n'
 
 
 def test_NewlineFramer_messages():

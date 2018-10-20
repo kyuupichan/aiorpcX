@@ -53,12 +53,9 @@ class SessionBase(asyncio.Protocol):
         self._proxy_address = None
         # For logger.debug messsages
         self.verbosity = 0
-        # Pausing sends when socket is full
-        self.paused = False
-        self.paused_messages = []
-        # Close once the send queue is exhausted.  An unfortunate hack
-        # necessitated by asyncio's non-blocking socket writes
-        self.close_after_send = False
+        # Cleared when the send socket is full
+        self.can_send = asyncio.Event()
+        self.can_send.set()
         # Statistics.  The RPC object also keeps its own statistics.
         self.start_time = time.time()
         self.errors = 0
@@ -121,16 +118,14 @@ class SessionBase(asyncio.Protocol):
 
     def pause_writing(self):
         '''Transport calls when the send buffer is full.'''
-        self.paused = True
+        self.can_send.clear()
         self.transport.pause_reading()
 
     def resume_writing(self):
         '''Transport calls when the send buffer has room.'''
-        if self.paused:
-            self.paused = False
+        if not self.can_send.is_set():
+            self.can_send.set()
             self.transport.resume_reading()
-            self._send_messages(self.paused_messages, framed=True)
-            self.paused_messages.clear()
 
     def connection_made(self, transport):
         '''Called by asyncio when a connection is established.
@@ -267,7 +262,7 @@ class BatchRequest(object):
         if exc_type is None:
             self.batch = Batch(self._requests)
             message, event = self._session.connection.send_batch(self.batch)
-            self._session._send_messages((message, ), framed=False)
+            await self._session._send_message(message)
             await event.wait()
             self.results = event.result
             if self._raise_errors:
@@ -282,6 +277,23 @@ class RPCSessionBase(SessionBase):
     def __init__(self, connection=None, framer=None, loop=None):
         super().__init__(framer, loop)
         self.connection = connection or self.default_connection()
+
+    async def _send_message(self, message):
+        if self.is_closing():
+            return
+        await self.can_send.wait()
+        framed_message = self.framer.frame(message)
+        self.send_size += len(framed_message)
+        self._using_bandwidth(len(framed_message))
+        self.send_count += 1
+        self.last_send = time.time()
+        if self.verbosity >= 4:
+            self.logger.debug(f'Sending framed message {framed_message}')
+        self.transport.write(framed_message)
+
+    def _check_errors(self, force_close):
+        if self.errors >= self.max_errors or force_close:
+            self.transport.close()
 
     async def _process_messages(self):
         '''Process incoming messages asynchronously.  They are placed
@@ -299,11 +311,10 @@ class RPCSessionBase(SessionBase):
                     requests = self.connection.receive_message(item)
                 except ProtocolError as e:
                     self.logger.debug(f'{e}')
-                    self.errors += 1
-                    if e.code == JSONRPC.PARSE_ERROR:
-                        self.close_after_send = True
                     if e.error_message:
-                        self._send_messages((e.error_message, ), framed=False)
+                        await self._send_message(e.error_message)
+                    self.errors += 1
+                    self._check_errors(e.code == JSONRPC.PARSE_ERROR)
                 else:
                     for request in requests:
                         await group.spawn(self._throttled_request(request))
@@ -332,31 +343,10 @@ class RPCSessionBase(SessionBase):
                 if isinstance(request, Request):
                     message = request.send_result(result)
                     if message:
-                        self._send_messages((message, ), framed=False)
+                        await self._send_message(message)
+            self._check_errors(False)
         finally:
             await self.work_queue.put(None)
-
-    def _send_messages(self, messages, *, framed):
-        '''Send messages, an iterable.  Framed is true if they are already
-        framed.'''
-        if self.is_closing():
-            return
-        if framed:
-            framed_message = b''.join(messages)
-        else:
-            framed_message = self.framer.frame(messages)
-        if self.paused:
-            self.paused_messages.append(framed_message)
-        else:
-            self.send_size += len(framed_message)
-            self._using_bandwidth(len(framed_message))
-            self.send_count += 1
-            self.last_send = time.time()
-            if self.verbosity >= 4:
-                self.logger.debug(f'Sending framed message {framed_message}')
-            self.transport.write(framed_message)
-            if self.close_after_send or self.errors >= self.max_errors:
-                self.transport.close()
 
     # External API
     def default_connection(self):
@@ -373,7 +363,7 @@ class RPCSessionBase(SessionBase):
     async def send_request(self, method, args=()):
         '''Send an RPC request over the network.'''
         message, event = self.connection.send_request(Request(method, args))
-        self._send_messages((message, ), framed=False)
+        await self._send_message(message)
         await event.wait()
         result = event.result
         if isinstance(result, Exception):
@@ -383,7 +373,7 @@ class RPCSessionBase(SessionBase):
     async def send_notification(self, method, args=()):
         '''Send an RPC notification over the network.'''
         message = self.connection.send_notification(Notification(method, args))
-        self._send_messages((message, ), framed=False)
+        await self._send_message(message)
 
     def send_batch(self, raise_errors=False):
         '''Return a BatchRequest.  Intended to be used like so:

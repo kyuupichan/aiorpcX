@@ -31,7 +31,7 @@ class MyServerSession(RPCServerSession):
 
     async def on_send_bad_response(self, response):
         message = json.dumps(response).encode()
-        self._send_messages((message, ), framed=False)
+        await self._send_message(message)
 
     async def on_echo(self, value):
         return value
@@ -166,7 +166,7 @@ class TestRPCClientSession:
         async with RPCClientSession('localhost', server.port) as client:
             server_session = MyServerSession.current_server
             server_session.max_errors = 1
-            client._send_messages((b'', ), framed=False)
+            await client._send_message(b'')
             await sleep(0.002)
             assert server_session.errors == 1
             # Check we got cut-off
@@ -259,19 +259,21 @@ class TestRPCClientSession:
                 client.transport.write = my_write
             except AttributeError:    # uvloop: transport.write is read-only
                 return
-            client._send_messages((b'a', ), framed=False)
+            await client._send_message(b'a')
             assert called
             called.clear()
 
+            async def monitor():
+                await sleep(0.002)
+                assert called == [b'A\n', b'very\n']
+                client.resume_writing()
+
             limit = 2
             msgs = b'A very long and boring meessage'.split()
-            framed_msgs = [client.framer.frame((msg, )) for msg in msgs]
-            client.pause_writing()
+            task = await spawn(monitor)
             for msg in msgs:
-                client._send_messages((msg, ), framed=False)
-            assert not called
-            client.resume_writing()
-            assert called == [b''.join(framed_msgs)]
+                await client._send_message(msg)
+            assert called == [client.framer.frame(msg) for msg in msgs]
             limit = None
             # Check idempotent
             client.resume_writing()
@@ -379,11 +381,11 @@ class MyClientSession(RPCClientSession):
         super().connection_made(transport)
         self.pm_task.cancel()
 
-    def send(self, item):
+    async def send(self, item):
         if not isinstance(item, str):
             item = json.dumps(item)
         item = item.encode()
-        self._send_messages((item, ), framed=False)
+        await self._send_message(item)
 
     async def response(self):
         message = await self.work_queue.get()
@@ -398,7 +400,7 @@ class TestWireResponses(object):
         async with MyClientSession('localhost', server.port) as client:
             item = {"jsonrpc": "2.0", "method": "echo", "params": [[42, 43]],
                     "id": 1}
-            client.send(item)
+            await client.send(item)
             assert await client.response() == {"jsonrpc": "2.0",
                                                "result": [42, 43], "id": 1}
 
@@ -407,7 +409,7 @@ class TestWireResponses(object):
         async with MyClientSession('localhost', server.port) as client:
             item = {"jsonrpc": "2.0", "method": "echo", "params":
                     {"value" : [42, 43]}, "id": 3}
-            client.send(item)
+            await client.send(item)
             assert await client.response() == {"jsonrpc": "2.0",
                                                "result": [42, 43], "id": 3}
 
@@ -415,7 +417,7 @@ class TestWireResponses(object):
     async def test_send_notification(self, server):
         async with MyClientSession('localhost', server.port) as client:
             item = {"jsonrpc": "2.0", "method": "echo", "params": [[42, 43]]}
-            client.send(item)
+            await client.send(item)
             with pytest.raises(TaskTimeout):
                 async with timeout_after(0.002):
                     await client.response()
@@ -424,7 +426,7 @@ class TestWireResponses(object):
     async def test_send_non_existent_notification(self, server):
         async with MyClientSession('localhost', server.port) as client:
             item = {"jsonrpc": "2.0", "method": "zz", "params": [[42, 43]]}
-            client.send(item)
+            await client.send(item)
             with pytest.raises(TaskTimeout):
                 async with timeout_after(0.002):
                     await client.response()
@@ -433,7 +435,7 @@ class TestWireResponses(object):
     async def test_send_non_existent_method(self, server):
         async with MyClientSession('localhost', server.port) as client:
             item = {"jsonrpc": "2.0", "method": "foobar", "id": 0}
-            client.send(item)
+            await client.send(item)
             assert await client.response() == {
                 "jsonrpc": "2.0", "id": 0, "error":
                 {'code': -32601, 'message': 'unknown method "foobar"'}}
@@ -442,7 +444,7 @@ class TestWireResponses(object):
     async def test_send_invalid_json(self, server):
         async with MyClientSession('localhost', server.port) as client:
             item = '{"jsonrpc": "2.0", "method": "foobar, "params": "bar", "b]'
-            client.send(item)
+            await client.send(item)
             assert await client.response() == {
                 "jsonrpc": "2.0", "error":
                 {"code": -32700, "message": "invalid JSON"}, "id": None}
@@ -451,7 +453,7 @@ class TestWireResponses(object):
     async def test_send_invalid_request_object(self, server):
         async with MyClientSession('localhost', server.port) as client:
             item = {"jsonrpc": "2.0", "method": 1, "params": "bar"}
-            client.send(item)
+            await client.send(item)
             assert await client.response() == {
                 "jsonrpc": "2.0", "id": None,
                 "error": {"code": -32602, "message":
@@ -462,7 +464,7 @@ class TestWireResponses(object):
         async with MyClientSession('localhost', server.port) as client:
             item = ('[{"jsonrpc": "2.0", "method": "sum", "params": [1,2,4],'
                     '"id": "1"}, {"jsonrpc": "2.0", "method"  ]')
-            client.send(item)
+            await client.send(item)
             assert await client.response() == {
                 "jsonrpc": "2.0", "id": None,
                 "error": {"code": -32700, "message": "invalid JSON"}}
@@ -471,7 +473,7 @@ class TestWireResponses(object):
     async def test_send_empty_batch(self, server):
         async with MyClientSession('localhost', server.port) as client:
             item = []
-            client.send(item)
+            await client.send(item)
             assert await client.response() == {
                 "jsonrpc": "2.0", "id": None,
                 "error": {"code": -32600, "message": "batch is empty"}}
@@ -480,7 +482,7 @@ class TestWireResponses(object):
     async def test_send_invalid_batch(self, server):
         async with MyClientSession('localhost', server.port) as client:
             item = [1]
-            client.send(item)
+            await client.send(item)
             assert await client.response() == [{
                 "jsonrpc": "2.0", "id": None,
                 "error": {"code": -32600, "message":
@@ -490,7 +492,7 @@ class TestWireResponses(object):
     async def test_send_invalid_batch_3(self, server):
         async with MyClientSession('localhost', server.port) as client:
             item = [1, 2, 3]
-            client.send(item)
+            await client.send(item)
             assert await client.response() == [{
                 "jsonrpc": "2.0", "id": None,
                 "error": {"code": -32600, "message":
@@ -501,7 +503,7 @@ class TestWireResponses(object):
         async with MyClientSession('localhost', server.port) as client:
             item = [1, {"jsonrpc": "2.0", "method": "echo", "params": [42],
                         "id": 0}]
-            client.send(item)
+            await client.send(item)
             assert await client.response() == [
                 { "jsonrpc": "2.0", "id": None,
                   "error": {"code": -32600, "message":
@@ -516,7 +518,7 @@ class TestWireResponses(object):
                 {"jsonrpc": "2.0", "method": "echo", "params": [42]},
                 {"jsonrpc": "2.0", "method": "echo", "params": [41], "id": 2}
             ]
-            client.send(item)
+            await client.send(item)
             assert await client.response() == [
                 {"jsonrpc": "2.0", "result": 40, "id": 3},
                 {"jsonrpc": "2.0", "result": 41, "id": 2}
@@ -526,7 +528,7 @@ class TestWireResponses(object):
     async def test_send_notification_batch(self, server):
         async with MyClientSession('localhost', server.port) as client:
             item = [{"jsonrpc": "2.0", "method": "echo", "params": [42]}] * 2
-            client.send(item)
+            await client.send(item)
             with pytest.raises(TaskTimeout):
                 async with timeout_after(0.002):
                     assert await client.response()

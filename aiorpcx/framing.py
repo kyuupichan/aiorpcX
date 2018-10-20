@@ -40,10 +40,8 @@ class FramerBase(object):
     a byte stream.
     '''
 
-    def frame(self, messages):
-        '''Return bytes formed by framing each message in messages,
-        an iterable, and concatenating the result.
-        '''
+    def frame(self, message):
+        '''Return the framed message.'''
         raise NotImplementedError
 
     def messages(self, data):
@@ -72,8 +70,8 @@ class NewlineFramer(FramerBase):
         self.parts = []
         self.synchronizing = False
 
-    def frame(self, messages):
-        return b''.join(chain.from_iterable((msg, b'\n') for msg in messages))
+    def frame(self, message):
+        return message + b'\n'
 
     def messages(self, data):
         assert isinstance(data, (bytes, bytearray))
