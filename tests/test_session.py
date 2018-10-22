@@ -17,12 +17,25 @@ def raises_method_not_found(message):
 
 class MyServerSession(RPCServerSession):
 
-    current_server = None
+    _current_server = None
+    max_errors = 10
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.notifications = []
-        MyServerSession.current_server = self
+
+    @classmethod
+    async def current_server(self):
+        await sleep(0)
+        return self._current_server
+
+    def connection_made(self, transport):
+        MyServerSession._current_server = self
+        super().connection_made(transport)
+
+    def connection_lost(self, exc):
+        MyServerSession._current_server = None
+        super().connection_lost(exc)
 
     async def handle_request(self, request):
         handler = getattr(self, f'on_{request.method}', None)
@@ -46,6 +59,8 @@ class MyServerSession(RPCServerSession):
         await sleep(10)
 
 
+
+
 def in_caplog(caplog, message):
     return any(message in record.message for record in caplog.records)
 
@@ -65,6 +80,7 @@ def server(event_loop, unused_tcp_port):
     event_loop.run_until_complete(server.listen())
     yield server
     event_loop.run_until_complete(server.close())
+    event_loop.run_until_complete(sleep(0))
 
 
 class TestServer:
@@ -153,18 +169,17 @@ class TestRPCClientSession:
     @pytest.mark.asyncio
     async def test_send_request_timeout(self, server):
         async with RPCClientSession('localhost', server.port) as client:
-            server_session = MyServerSession.current_server
+            server_session = await MyServerSession.current_server()
             with pytest.raises(TaskTimeout):
                 async with timeout_after(0.1):
                     await client.send_request('sleepy')
         # Assert the server doesn't treat cancellation as an error
-        await sleep(0.001)
         assert server_session.errors == 0
 
     @pytest.mark.asyncio
     async def test_send_ill_formed(self, server):
         async with RPCClientSession('localhost', server.port) as client:
-            server_session = MyServerSession.current_server
+            server_session = await MyServerSession.current_server()
             server_session.max_errors = 1
             await client._send_message(b'')
             await sleep(0.002)
@@ -175,9 +190,9 @@ class TestRPCClientSession:
     @pytest.mark.asyncio
     async def test_send_notification(self, server):
         async with RPCClientSession('localhost', server.port) as client:
+            server = await MyServerSession.current_server()
             await client.send_notification('notify', ['test'])
-        await asyncio.sleep(0.001)
-        assert MyServerSession.current_server.notifications == ['test']
+        assert server.notifications == ['test']
 
     @pytest.mark.asyncio
     async def test_force_close(self, server):
@@ -206,6 +221,7 @@ class TestRPCClientSession:
             assert await request == msg
             assert not caplog.records
             client.data_received(raw_msg)  # Unframed; no \n
+            await sleep(0)
             assert len(caplog.records) == 1
             assert in_caplog(caplog, 'dropping message over 5 bytes')
 
@@ -241,7 +257,7 @@ class TestRPCClientSession:
         async with RPCClientSession('localhost', server.port):
             pass
 
-        await asyncio.sleep(0.005)  # Yield to event loop
+        await asyncio.sleep(0.001)  # Yield to event loop
         assert asyncio.Task.all_tasks(loop) == tasks
 
     @pytest.mark.asyncio
@@ -306,7 +322,7 @@ class TestRPCClientSession:
     async def test_close_on_many_errors(self, server):
         try:
             async with RPCClientSession('localhost', server.port) as client:
-                server_session = MyServerSession.current_server
+                server_session = await MyServerSession.current_server()
                 for n in range(client.max_errors + 5):
                     with suppress(RPCError):
                         await client.send_request('boo')
@@ -378,8 +394,7 @@ class TestRPCClientSession:
 class MyClientSession(RPCClientSession):
     # For tests of wire messages
     def connection_made(self, transport):
-        super().connection_made(transport)
-        self.pm_task.cancel()
+        self.transport = transport
 
     async def send(self, item):
         if not isinstance(item, str):
@@ -388,7 +403,7 @@ class MyClientSession(RPCClientSession):
         await self._send_message(item)
 
     async def response(self):
-        message = await self.work_queue.get()
+        message = await self.framer.receive_message()
         return json.loads(message.decode())
 
 

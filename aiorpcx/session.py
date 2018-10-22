@@ -46,8 +46,6 @@ class SessionBase(asyncio.Protocol):
         self.loop = loop or asyncio.get_event_loop()
         self.logger = logging.getLogger(self.__class__.__name__)
         self.transport = None
-        # Concurrency
-        self.max_concurrent = 6
         # Set when a connection is made
         self._address = None
         self._proxy_address = None
@@ -70,8 +68,8 @@ class SessionBase(asyncio.Protocol):
         self.bw_time = self.start_time
         self.bw_charge = 0
         # Concurrency control
+        self.max_concurrent = 6
         self.concurrency = Concurrency(self.max_concurrent)
-        self.work_queue = Queue()
         self.pm_task = None
 
     async def _update_concurrency(self):
@@ -103,18 +101,7 @@ class SessionBase(asyncio.Protocol):
             self.logger.debug(f'Received framed message {framed_message}')
         self.recv_size += len(framed_message)
         self._using_bandwidth(len(framed_message))
-
-        count = 0
-        try:
-            for message in self.framer.messages(framed_message):
-                count += 1
-                self.work_queue.put_nowait(message)
-        except MemoryError as e:
-            self.logger.warning(f'{e!r}')
-
-        if count:
-            self.recv_count += count
-            self.last_recv = time.time()
+        self.framer.received_bytes(framed_message)
 
     def pause_writing(self):
         '''Transport calls when the send buffer is full.'''
@@ -152,10 +139,6 @@ class SessionBase(asyncio.Protocol):
         # Cancel pending requests and message processing
         self.connection.cancel_pending_requests()
         self.pm_task.cancel()
-        # This helps task release of server sessions as asyncio
-        # doesn't call close() explicitly
-        if not isinstance(self, RPCClientSession):
-            self.pm_task = None
 
     # External API
     def default_framer(self):
@@ -191,13 +174,12 @@ class SessionBase(asyncio.Protocol):
         if self.transport:
             self.transport.close()
         if self.pm_task:
-            task = self.pm_task   # copy as self.pm_task may be set to None
             with suppress(CancelledError):
                 async with ignore_after(force_after):
-                    await task
+                    await self.pm_task
                 if self.transport:
                     self.transport.abort()
-                await task
+                await self.pm_task
 
 
 class BatchError(Exception):
@@ -291,62 +273,70 @@ class RPCSessionBase(SessionBase):
             self.logger.debug(f'Sending framed message {framed_message}')
         self.transport.write(framed_message)
 
-    def _check_errors(self, force_close):
+    async def _check_errors(self, force_close):
         if self.errors >= self.max_errors or force_close:
-            self.transport.close()
+            await self.close()
 
     async def _process_messages(self):
-        '''Process incoming messages asynchronously.  They are placed
-        syncronously on a queue.
+        '''Process incoming messages asynchronously and consume the
+        results.
         '''
         async with TaskGroup() as group:
-            for n in itertools.count():
-                item = await self.work_queue.get()
-                # Consume completed request tasks
-                if item is None:
-                    await group.next_result()
-                    continue
+            await group.spawn(self._receive_messages, group)
+            await group.spawn(self._collect_results, group)
 
-                try:
-                    requests = self.connection.receive_message(item)
-                except ProtocolError as e:
-                    self.logger.debug(f'{e}')
-                    if e.error_message:
-                        await self._send_message(e.error_message)
-                    self.errors += 1
-                    self._check_errors(e.code == JSONRPC.PARSE_ERROR)
-                else:
-                    for request in requests:
-                        await group.spawn(self._throttled_request(request))
-                if self.errors >= self.max_errors:
-                    self.transport.close()
-                if n % 10 == 0:
-                    await self._update_concurrency()
+    async def _collect_results(self, group):
+        try:
+            while True:
+                await group.next_result()
+        except RuntimeError:
+            pass
+
+    async def _receive_messages(self, group):
+        while not self.is_closing():
+            try:
+                message = await self.framer.receive_message()
+            except MemoryError as e:
+                self.logger.warning(f'{e!r}')
+                continue
+
+            self.last_recv = time.time()
+            self.recv_count += 1
+            if self.recv_count % 10 == 0:
+                await self._update_concurrency()
+
+            try:
+                requests = self.connection.receive_message(message)
+            except ProtocolError as e:
+                self.logger.debug(f'{e}')
+                if e.error_message:
+                    await self._send_message(e.error_message)
+                self.errors += 1
+                await self._check_errors(e.code == JSONRPC.PARSE_ERROR)
+            else:
+                for request in requests:
+                    await group.spawn(self._throttled_request(request))
 
     async def _throttled_request(self, request):
-        '''Process a request.  When complete, put None on the work queue
-        to tell the main loop to collect the result.'''
-        try:
-            async with self.concurrency.semaphore:
-                try:
-                    result = await self.handle_request(request)
-                except (ProtocolError, RPCError) as e:
-                    result = e
-                    self.errors += 1
-                except CancelledError:
-                    raise
-                except Exception:
-                    self.logger.exception(f'exception handling {request}')
-                    result = RPCError(JSONRPC.INTERNAL_ERROR,
-                                      'internal server error')
-                    self.errors += 1
-                if isinstance(request, Request):
-                    message = request.send_result(result)
-                    if message:
-                        await self._send_message(message)
-            self._check_errors(False)
-        finally:
-            await self.work_queue.put(None)
+        '''Process a single request, respecting the concurrency limit.'''
+        async with self.concurrency.semaphore:
+            try:
+                result = await self.handle_request(request)
+            except (ProtocolError, RPCError) as e:
+                result = e
+                self.errors += 1
+            except CancelledError:
+                raise
+            except Exception:
+                self.logger.exception(f'exception handling {request}')
+                result = RPCError(JSONRPC.INTERNAL_ERROR,
+                                  'internal server error')
+                self.errors += 1
+            if isinstance(request, Request):
+                message = request.send_result(result)
+                if message:
+                    await self._send_message(message)
+            await self._check_errors(False)
 
     # External API
     def default_connection(self):

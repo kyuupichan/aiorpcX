@@ -31,6 +31,8 @@ from itertools import chain
 from collections import namedtuple
 import struct
 
+from aiorpcx import Queue
+
 
 class FramerBase(object):
     '''Abstract base class for a framer.
@@ -44,56 +46,82 @@ class FramerBase(object):
         '''Return the framed message.'''
         raise NotImplementedError
 
-    def messages(self, data):
-        '''A generator that yields messages for the caller to process.
+    def received_bytes(self, data):
+        '''Pass incoming network bytes.'''
+        raise NotImplementedError
 
-        Raises a MemoryError Exception if the internal buffer
-        overflows, so converting to a list before processing risks
-        message loss.
-        '''
+    async def receive_message(self):
+        '''Wait for a complete unframed message to arrive, and return it.'''
         raise NotImplementedError
 
 
 class NewlineFramer(FramerBase):
     '''A framer for a protocol where messages are separated by newlines.'''
 
+    # The default max_size value is motivated by JSONRPC, where a
+    # normal request will be 250 bytes or less, and a reasonable
+    # batch may contain 4000 requests.
     def __init__(self, max_size=250 * 4000):
         '''max_size - an anti-DoS measure.  If, after processing an incoming
         message, buffered data would exceed max_size bytes, that
         buffered data is dropped entirely and the framer waits for a
         newline character to re-synchronize the stream.
         '''
-        # The default max_size value is motivated by JSONRPC, where a
-        # normal request will be 250 bytes or less, and a reasonable
-        # batch may contain 4000 requests.
         self.max_size = max_size
-        self.parts = []
+        self.queue = Queue()
+        self.received_bytes = self.queue.put_nowait
         self.synchronizing = False
+        self.residual = b''
 
     def frame(self, message):
         return message + b'\n'
 
-    def messages(self, data):
-        assert isinstance(data, (bytes, bytearray))
-        parts = self.parts
+    async def receive_message(self):
+        parts = []
+        buffer_size = 0
         while True:
-            npos = data.find(ord('\n'))
-            if npos == -1:
-                parts.append(data)
-                break
-            tail, data = data[:npos], data[npos + 1:]
-            if self.synchronizing:
-                self.synchronizing = False
-            else:
-                parts.append(tail)
-                yield b''.join(parts)
-                parts.clear()
+            part = self.residual
+            self.residual = b''
+            if not part:
+                part = await self.queue.get()
 
-        # Ignore over-sized messages; re-synchronize
-        buffer_size = sum(len(part) for part in parts)
-        if buffer_size > self.max_size:
-            parts.clear()
-            if not self.synchronizing:
+            npos = part.find(b'\n')
+            if npos == -1:
+                parts.append(part)
+                buffer_size += len(part)
+                # Ignore over-sized messages; re-synchronize
+                if buffer_size <= self.max_size:
+                    continue
                 self.synchronizing = True
                 raise MemoryError(f'dropping message over {self.max_size:,d} '
-                                  'bytes and re-synchronizing')
+                                  f'bytes and re-synchronizing')
+
+            tail, self.residual = part[:npos], part[npos + 1:]
+            if self.synchronizing:
+                self.synchronizing = False
+                return await self.receive_message()
+            else:
+                parts.append(tail)
+                return b''.join(parts)
+
+
+class ByteQueue(object):
+    '''A producer-comsumer queue.  Incoming network data is put as it
+    arrives, and the consumer calls an async method waiting for data of
+    a specific length.'''
+
+    def __init__(self):
+        self.queue = Queue()
+        self.parts = []
+        self.parts_len = 0
+        self.put_nowait = self.queue.put_nowait
+
+    async def receive(self, size):
+        while self.parts_len < size:
+            part = await self.queue.get()
+            self.parts.append(part)
+            self.parts_len += len(part)
+        self.parts_len -= size
+        whole = b''.join(self.parts)
+        self.parts = [whole[size:]]
+        return whole[:size]

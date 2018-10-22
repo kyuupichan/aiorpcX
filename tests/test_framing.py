@@ -3,10 +3,13 @@ import pytest
 from aiorpcx import *
 
 
-def test_FramerBase():
+@pytest.mark.asyncio
+async def test_FramerBase():
     framer = FramerBase()
     with pytest.raises(NotImplementedError):
-        framer.messages('')
+        framer.received_bytes(b'')
+    with pytest.raises(NotImplementedError):
+        await framer.receive_message()
     with pytest.raises(NotImplementedError):
         framer.frame(b'')
 
@@ -16,33 +19,45 @@ def test_NewlineFramer_framing():
     assert framer.frame(b'foo') == b'foo\n'
 
 
-def test_NewlineFramer_messages():
+@pytest.mark.asyncio
+async def test_NewlineFramer_messages():
     framer = NewlineFramer()
-    messages = list(framer.messages(b'abc\ndef\ng'))
-    assert messages == [b'abc', b'def']
-    messages = list(framer.messages(b'h'))
-    assert messages == []
-    messages = list(framer.messages(b'i\n'))
-    assert messages == [b'ghi']
+    framer.received_bytes(b'abc\ndef\ngh')
+    assert await framer.receive_message() == b'abc'
+    assert await framer.receive_message() == b'def'
+
+    async def receive_message():
+        return await framer.receive_message()
+    async def put_rest():
+        await sleep(0.001)
+        framer.received_bytes(b'i\n')
+
+    async with TaskGroup() as group:
+        task = await group.spawn(receive_message)
+        await group.spawn(put_rest)
+    assert task.result() == b'ghi'
 
 
-def test_NewlineFramer_overflow():
+@pytest.mark.asyncio
+async def test_NewlineFramer_overflow():
     framer = NewlineFramer(max_size=5)
-    messages = list(framer.messages(b'abcde'))
-    # Accepts 5 bytes
-    assert messages == []
-    # Rejects 6 bytes
+    framer.received_bytes(b'abcde\n')
+    assert await framer.receive_message() == b'abcde'
+    framer.received_bytes(b'abcde')
+    framer.received_bytes(b'f')
     with pytest.raises(MemoryError):
-        list(framer.messages(b'f'))
-    # Resynchronizes, returns b'yz' and stores 'AB'
-    messages = list(framer.messages(b'ghijklmnopqrstuvwx\nyz\nAB'))
-    assert messages == [b'yz']
+        await framer.receive_message()
+
+    # Resynchronizes to next \n, returns b'yz' and stores 'AB'
+    framer.received_bytes(b'ghijklmnopqrstuvwx\nyz\nAB')
+    assert await framer.receive_message() == b'yz'
     # Add 'C'
-    messages = list(framer.messages(b'C'))
-    assert messages == []
+    framer.received_bytes(b'C')
+    async with TaskGroup() as group:
+        task = await group.spawn(framer.receive_message())
+        await sleep(0.001)
+        framer.received_bytes(b'DEFGHIJKL\nYZ')
     # Accepts over-sized message as doesn't need to store it
-    messages = list(framer.messages(b'DEFGHIJKL\nMNOPQRSTUVWX\nYZ'))
-    assert messages == [b'ABCDEFGHIJKL', b'MNOPQRSTUVWX']
-    # Accepts over-sized message as doesn't need to store it
-    messages = list(framer.messages(b'\n'))
-    assert messages == [b'YZ']
+    assert task.result() == b'ABCDEFGHIJKL'
+    framer.received_bytes(b'\n')
+    assert await framer.receive_message() == b'YZ'
