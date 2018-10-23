@@ -94,6 +94,38 @@ class SessionBase(asyncio.Protocol):
         '''Called when sending or receiving size bytes.'''
         self.bw_charge += size
 
+    async def _process_messages(self):
+        '''Process incoming messages asynchronously and consume the
+        results.
+        '''
+        async with TaskGroup() as group:
+            await group.spawn(self._receive_messages, group)
+            await group.spawn(self._collect_tasks, group)
+
+    async def _collect_tasks(self, group):
+        while True:
+            if await group.next_done() is None:
+                break
+
+    async def _send_message(self, message):
+        if self.is_closing():
+            return
+        await self.can_send.wait()
+        framed_message = self.framer.frame(message)
+        self.send_size += len(framed_message)
+        self._using_bandwidth(len(framed_message))
+        self.send_count += 1
+        self.last_send = time.time()
+        if self.verbosity >= 4:
+            self.logger.debug(f'Sending framed message {framed_message}')
+        self.transport.write(framed_message)
+
+    def _bump_errors(self):
+        self.errors += 1
+        if self.errors >= self.max_errors:
+            # Don't await self.close() because that is self-cancelling
+            self.transport.close()
+
     # asyncio framework
     def data_received(self, framed_message):
         '''Called by asyncio when a message comes in.'''
@@ -260,38 +292,6 @@ class RPCSessionBase(SessionBase):
         super().__init__(framer, loop)
         self.connection = connection or self.default_connection()
 
-    async def _send_message(self, message):
-        if self.is_closing():
-            return
-        await self.can_send.wait()
-        framed_message = self.framer.frame(message)
-        self.send_size += len(framed_message)
-        self._using_bandwidth(len(framed_message))
-        self.send_count += 1
-        self.last_send = time.time()
-        if self.verbosity >= 4:
-            self.logger.debug(f'Sending framed message {framed_message}')
-        self.transport.write(framed_message)
-
-    async def _check_errors(self, force_close):
-        if self.errors >= self.max_errors or force_close:
-            await self.close()
-
-    async def _process_messages(self):
-        '''Process incoming messages asynchronously and consume the
-        results.
-        '''
-        async with TaskGroup() as group:
-            await group.spawn(self._receive_messages, group)
-            await group.spawn(self._collect_results, group)
-
-    async def _collect_results(self, group):
-        try:
-            while True:
-                await group.next_result()
-        except RuntimeError:
-            pass
-
     async def _receive_messages(self, group):
         while not self.is_closing():
             try:
@@ -311,8 +311,9 @@ class RPCSessionBase(SessionBase):
                 self.logger.debug(f'{e}')
                 if e.error_message:
                     await self._send_message(e.error_message)
-                self.errors += 1
-                await self._check_errors(e.code == JSONRPC.PARSE_ERROR)
+                if e.code == JSONRPC.PARSE_ERROR:
+                    self.max_errors = 0
+                self._bump_errors()
             else:
                 for request in requests:
                     await group.spawn(self._throttled_request(request))
@@ -324,19 +325,18 @@ class RPCSessionBase(SessionBase):
                 result = await self.handle_request(request)
             except (ProtocolError, RPCError) as e:
                 result = e
-                self.errors += 1
             except CancelledError:
                 raise
             except Exception:
                 self.logger.exception(f'exception handling {request}')
                 result = RPCError(JSONRPC.INTERNAL_ERROR,
                                   'internal server error')
-                self.errors += 1
             if isinstance(request, Request):
                 message = request.send_result(result)
                 if message:
                     await self._send_message(message)
-            await self._check_errors(False)
+            if isinstance(result, Exception):
+                self._bump_errors()
 
     # External API
     def default_connection(self):
@@ -424,6 +424,74 @@ class RPCClientSession(RPCSessionBase):
 class RPCServerSession(RPCSessionBase):
     '''A server session - created by a listening Server for each incoming
     connection.'''
+
+
+class MessageSessionBase(SessionBase):
+    '''Base class for protocols where messages are not tied to responses,
+    such as the Bitcoin protocol.'''
+
+    async def _receive_messages(self, group):
+        while not self.is_closing():
+            try:
+                message = await self.framer.receive_message()
+            except BadMagicError as e:
+                magic, expected = e.args
+                self.logger.error(
+                    f'bad network magic: got {magic} expected {expected}, '
+                    f'disconnecting'
+                )
+                await self.close()
+            except OversizedPayloadError as e:
+                command, payload_len = e.args
+                self.logger.error(
+                    f'oversized payload of {payload_len:,d} bytes to command '
+                    f'{command}, disconnecting'
+                )
+                await self.close()
+            except BadChecksumError as e:
+                payload_checksum, claimed_checksum = e.args
+                self.logger.warning(
+                    f'checksum mismatch: payload {payload_checksum} '
+                    f'claimed {claimed_checksum}'
+                )
+                self._bump_errors()
+            else:
+                self.last_recv = time.time()
+                self.recv_count += 1
+                if self.recv_count % 10 == 0:
+                    await self._update_concurrency()
+                await group.spawn(self._throttled_message(message))
+
+    async def _throttled_message(self, message):
+        '''Process a single request, respecting the concurrency limit.'''
+        async with self.concurrency.semaphore:
+            try:
+                command, payload = message
+                await self.handle_message(command, payload)
+            except (ProtocolError, RPCError) as e:
+                self._bump_errors()
+            except CancelledError:
+                raise
+            except Exception:
+                self.logger.exception(f'exception handling {message}')
+                self._bump_errors()
+
+
+    # External API
+    async def handle_message(self, message):
+        '''message is a (command, payload) pair.'''
+        pass
+
+    async def send_message(self, message):
+        '''Send a message (command, payload) over the network.'''
+        await self._send_message(message)
+
+
+class BitcoinSession(MessageSessionBase):
+
+    def default_framer(self):
+        '''Return a bitcoin framer.'''
+        return BitcoinFramer(bytes.fromhex('e3e1f3e8'), 128_000_000)
 
 
 class Server(object):

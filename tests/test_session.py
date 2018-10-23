@@ -323,13 +323,12 @@ class TestRPCClientSession:
         try:
             async with RPCClientSession('localhost', server.port) as client:
                 server_session = await MyServerSession.current_server()
-                for n in range(client.max_errors + 5):
+                for n in range(server_session.max_errors + 1):
                     with suppress(RPCError):
                         await client.send_request('boo')
         except CancelledError:
             pass
         assert server_session.errors == server_session.max_errors
-        assert client.transport is None
 
     @pytest.mark.asyncio
     async def test_send_empty_batch(self, server):

@@ -1,6 +1,10 @@
+import os
+import random
+
 import pytest
 
 from aiorpcx import *
+from aiorpcx.framing import ByteQueue
 
 
 @pytest.mark.asyncio
@@ -61,3 +65,129 @@ async def test_NewlineFramer_overflow():
     assert task.result() == b'ABCDEFGHIJKL'
     framer.received_bytes(b'\n')
     assert await framer.receive_message() == b'YZ'
+
+
+@pytest.mark.asyncio
+async def test_ByteQueue():
+    bq = ByteQueue()
+
+    lengths = [random.randrange(0, 15) for n in range(40)]
+    data = os.urandom(sum(lengths))
+
+    answer = []
+    cursor = 0
+    for length in lengths:
+        answer.append(data[cursor: cursor + length])
+        cursor += length
+    assert b''.join(answer) == data
+
+    async def putter():
+        cursor = 0
+        while cursor < len(data):
+            size = random.randrange(0, min(15, len(data) - cursor + 1))
+            bq.put_nowait(data[cursor:cursor + size])
+            cursor += size
+            await sleep(random.random() * 0.005)
+
+    async def getter():
+        result = []
+        for length in lengths:
+            item = await bq.receive(length)
+            result.append(item)
+            await sleep(random.random() * 0.005)
+        return result
+
+    async with timeout_after(1):
+        async with TaskGroup() as group:
+            await group.spawn(putter)
+            gjob = await group.spawn(getter)
+
+    assert gjob.result() == answer
+    assert bq.parts == [b'']
+    assert bq.parts_len == 0
+
+
+def BCH_framer():
+    return BitcoinFramer(bytes.fromhex('e3e1f3e8'), 2 * 1024 * 1024)
+
+
+class TestBitcoinFramer():
+
+    def test_framing(self):
+        framer = BCH_framer()
+        result = framer.frame((b'version', b'payload'))
+        assert result == b'\xe3\xe1\xf3\xe8version\x00\x00\x00\x00\x00'  \
+            b'\x07\x00\x00\x00\xe7\x871\xbbpayload'
+
+    @pytest.mark.asyncio
+    async def test_not_implemented(self):
+        framer = BinaryFramer()
+        with pytest.raises(NotImplementedError):
+            framer._checksum(b'')
+        with pytest.raises(NotImplementedError):
+            framer._build_header(b'', b'')
+        with pytest.raises(NotImplementedError):
+            await framer._receive_header()
+
+    def test_oversized_command(self):
+        framer = BCH_framer()
+        with pytest.raises(ValueError):
+            framer._build_header(bytes(13), b'')
+
+    @pytest.mark.asyncio
+    async def test_oversized_message(self):
+        framer = BCH_framer()
+        max_size = framer._max_block_size
+        header = framer._build_header(b'', bytes(1024 * 1024))
+        framer.received_bytes(header)
+        await framer._receive_header()
+        header = framer._build_header(b'', bytes(1024 * 1024 + 1))
+        framer.received_bytes(header)
+        with pytest.raises(OversizedPayloadError):
+            await framer._receive_header()
+        header = framer._build_header(b'block', bytes(max_size))
+        framer.received_bytes(header)
+        await framer._receive_header()
+        header = framer._build_header(b'block', bytes(max_size + 1))
+        framer.received_bytes(header)
+        with pytest.raises(OversizedPayloadError):
+            await framer._receive_header()
+
+    @pytest.mark.asyncio
+    async def test_receive_message(self):
+        framer = BCH_framer()
+        result = framer.frame((b'version', b'payload'))
+        framer.received_bytes(result)
+
+        command, payload = await framer.receive_message()
+        assert command == b'version'
+        assert payload == b'payload'
+
+    @pytest.mark.asyncio
+    async def test_bad_magic(self):
+        framer = BCH_framer()
+        good_msg = framer.frame((b'version', b'payload'))
+        pos = random.randrange(0, 24)
+
+        for n in range(4):
+            msg = bytearray(good_msg)
+            msg[n] ^= 1
+            framer.received_bytes(msg[:pos])
+            # Just header should trigger the error
+            framer.received_bytes(msg[pos:24])
+            with pytest.raises(BadMagicError):
+                await framer.receive_message()
+
+    @pytest.mark.asyncio
+    async def test_bad_checksum(self):
+        framer = BCH_framer()
+        good_msg = framer.frame((b'version', b'payload'))
+
+        pos = random.randrange(0, len(good_msg))
+        for n in range(20, 24):
+            msg = bytearray(good_msg)
+            msg[n] ^= 1
+            framer.received_bytes(msg[:pos])
+            framer.received_bytes(msg[pos:])
+            with pytest.raises(BadChecksumError):
+                await framer.receive_message()
