@@ -59,8 +59,6 @@ class MyServerSession(RPCServerSession):
         await sleep(10)
 
 
-
-
 def in_caplog(caplog, message):
     return any(message in record.message for record in caplog.records)
 
@@ -80,7 +78,7 @@ def server(event_loop, unused_tcp_port):
     event_loop.run_until_complete(server.listen())
     yield server
     event_loop.run_until_complete(server.close())
-    event_loop.run_until_complete(sleep(0))
+    event_loop.run_until_complete(sleep(0.001))
 
 
 class TestServer:
@@ -552,6 +550,9 @@ class TestWireResponses(object):
 async def test_base_class_implementation():
     session = RPCClientSession()
     await session.handle_request(Request('', []))
+    from aiorpcx.session import SessionBase
+    with pytest.raises(NotImplementedError):
+        SessionBase()
 
 
 def test_default_and_passed_connection():
@@ -565,3 +566,105 @@ def test_default_and_passed_connection():
 
     session = RPCClientSession(connection=connection)
     assert session.connection == connection
+
+
+class MessageServer(MessageSession):
+
+    @classmethod
+    async def current_server(self):
+        await sleep(0)
+        return self._current_server
+
+    def connection_made(self, transport):
+        MessageServer._current_server = self
+        super().connection_made(transport)
+        self.messages = []
+
+    def connection_lost(self, exc):
+        MessageServer._current_server = None
+        super().connection_lost(exc)
+
+    async def handle_message(self, message):
+        command, payload = message
+        self.messages.append(message)
+        if command == b'syntax':
+            raise SyntaxError
+        elif command == b'protocol':
+            raise ProtocolError(2, 'Not allowed')
+        elif command == b'cancel':
+            raise CancelledError
+
+@pytest.fixture
+def msg_server(event_loop, unused_tcp_port):
+    port = unused_tcp_port
+    server = Server(MessageServer, 'localhost', port, loop=event_loop)
+    event_loop.run_until_complete(server.listen())
+    yield server
+    event_loop.run_until_complete(server.close())
+
+
+class TestMessageSession(object):
+
+    @pytest.mark.asyncio
+    async def test_basic_send(self, msg_server):
+        async with MessageSession('localhost', msg_server.port) as client:
+            server_session = await MessageServer.current_server()
+            await client.send_message((b'version', b'abc'))
+        assert server_session.messages == [(b'version', b'abc')]
+
+    @pytest.mark.asyncio
+    async def test_many_sends(self, msg_server):
+        count = 12
+        async with MessageSession('localhost', msg_server.port) as client:
+            server_session = await MessageServer.current_server()
+            for n in range(count):
+                await client.send_message((b'version', b'abc'))
+        assert server_session.messages == [(b'version', b'abc')] * count
+
+    @pytest.mark.asyncio
+    async def test_errors(self, msg_server, caplog):
+        async with MessageSession('localhost', msg_server.port) as client:
+            await client.send_message((b'syntax', b''))
+            await client.send_message((b'protocol', b''))
+            await client.send_message((b'cancel', b''))
+        assert in_caplog(caplog, 'exception handling')
+        assert in_caplog(caplog, 'Not allowed')
+
+    @pytest.mark.asyncio
+    async def test_bad_magic(self, msg_server, caplog):
+        async with MessageSession('localhost', msg_server.port) as client:
+            msg = bytearray(client.framer.frame((b'version', b'')))
+            msg[0] = msg[0] ^ 1
+            client.transport.write(msg)
+        assert in_caplog(caplog, 'bad network magic')
+
+    @pytest.mark.asyncio
+    async def test_bad_checksum(self, msg_server, caplog):
+        async with MessageSession('localhost', msg_server.port) as client:
+            msg = bytearray(client.framer.frame((b'version', b'')))
+            msg[-1] = msg[-1] ^ 1
+            client.transport.write(msg)
+        assert in_caplog(caplog, 'checksum mismatch')
+
+    @pytest.mark.asyncio
+    async def test_oversized_message(self, msg_server, caplog):
+        async with MessageSession('localhost', msg_server.port) as client:
+            big = 1024 * 1024
+            await client.send_message((b'version', bytes(big)))
+        assert not in_caplog(caplog, 'oversized payload')
+        async with MessageSession('localhost', msg_server.port) as client:
+            await client.send_message((b'version', bytes(big + 1)))
+        assert in_caplog(caplog, 'oversized payload')
+
+    @pytest.mark.asyncio
+    async def test_proxy(self, msg_server):
+        proxy = SOCKSProxy(('localhost', 79), SOCKS5, None)
+        with pytest.raises(OSError):
+            async with MessageSession('localhost', msg_server.port,
+                                      proxy=proxy):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_coverage(self):
+        session = MessageSession()
+        await session.handle_message(b'')

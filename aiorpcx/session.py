@@ -24,7 +24,8 @@
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
-__all__ = ('RPCClientSession', 'RPCServerSession', 'Server', 'BatchError')
+__all__ = ('RPCClientSession', 'RPCServerSession', 'Server', 'BatchError',
+           'MessageSession')
 
 
 import asyncio
@@ -35,6 +36,44 @@ from contextlib import suppress
 
 from aiorpcx import *
 from aiorpcx.util import Concurrency
+
+
+class ClientMixin(object):
+    '''A client session mixin.
+
+    To initiate a connection to the remote server call
+    create_connection().  Each successful call should have a
+    corresponding call to close().
+
+    Alternatively if used in a with statement, the connection is made
+    on entry to the block, and closed on exit from the block.
+    '''
+
+    def __init__(self, host=None, port=None, *, proxy=None, **kwargs):
+        self.host = host
+        self.port = port
+        self.kwargs = kwargs
+        self.proxy = proxy
+
+    async def create_connection(self):
+        '''Initiate a connection.'''
+        def self_func():
+            return self
+
+        if self.proxy:
+            create_connection = self.proxy.create_connection
+        else:
+            create_connection = self.loop.create_connection
+
+        return await create_connection(self_func, self.host, self.port,
+                                       **self.kwargs)
+
+    async def __aenter__(self):
+        await self.create_connection()
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        await self.close()
 
 
 class SessionBase(asyncio.Protocol):
@@ -168,8 +207,6 @@ class SessionBase(asyncio.Protocol):
         Tear down things done in connection_made.'''
         self._address = None
         self.transport = None
-        # Cancel pending requests and message processing
-        self.connection.cancel_pending_requests()
         self.pm_task.cancel()
 
     # External API
@@ -212,6 +249,101 @@ class SessionBase(asyncio.Protocol):
                 if self.transport:
                     self.transport.abort()
                 await self.pm_task
+
+
+class MessageSession(SessionBase):
+    '''Session class for protocols where messages are not tied to responses,
+    such as the Bitcoin protocol.
+
+    To use as a client (connection-opening) session, pass host, port
+    and perhaps a proxy.
+    '''
+    def __init__(self, host=None, port=None, *, framer=None,
+                 loop=None, proxy=None, **kwargs):
+        super().__init__(framer, loop)
+        self.host = host
+        self.port = port
+        self.kwargs = kwargs
+        self.proxy = proxy
+
+    async def _receive_messages(self, group):
+        while not self.is_closing():
+            try:
+                message = await self.framer.receive_message()
+            except BadMagicError as e:
+                magic, expected = e.args
+                self.logger.error(
+                    f'bad network magic: got {magic} expected {expected}, '
+                    f'disconnecting'
+                )
+                self.transport.close()
+            except OversizedPayloadError as e:
+                command, payload_len = e.args
+                self.logger.error(
+                    f'oversized payload of {payload_len:,d} bytes to command '
+                    f'{command}, disconnecting'
+                )
+                self.transport.close()
+            except BadChecksumError as e:
+                payload_checksum, claimed_checksum = e.args
+                self.logger.warning(
+                    f'checksum mismatch: actual {payload_checksum.hex()} '
+                    f'vs claimed {claimed_checksum.hex()}'
+                )
+                self._bump_errors()
+            else:
+                self.last_recv = time.time()
+                self.recv_count += 1
+                if self.recv_count % 10 == 0:
+                    await self._update_concurrency()
+                await group.spawn(self._throttled_message(message))
+
+    async def _throttled_message(self, message):
+        '''Process a single request, respecting the concurrency limit.'''
+        async with self.concurrency.semaphore:
+            try:
+                await self.handle_message(message)
+            except ProtocolError as e:
+                self.logger.error(f'{e}')
+                self._bump_errors()
+            except CancelledError:
+                raise
+            except Exception:
+                self.logger.exception(f'exception handling {message}')
+                self._bump_errors()
+
+    # External API
+    def default_framer(self):
+        '''Return a bitcoin framer.'''
+        return BitcoinFramer(bytes.fromhex('e3e1f3e8'), 128_000_000)
+
+    async def create_connection(self):
+        '''Initiate a connection.'''
+        def self_func():
+            return self
+
+        if self.proxy:
+            create_connection = self.proxy.create_connection
+        else:
+            create_connection = self.loop.create_connection
+
+        return await create_connection(self_func, self.host, self.port,
+                                       **self.kwargs)
+
+    async def __aenter__(self):
+        await self.create_connection()
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        await self.close()
+
+    async def handle_message(self, message):
+        '''message is a (command, payload) pair.'''
+        pass
+
+    async def send_message(self, message):
+        '''Send a message (command, payload) over the network.'''
+        await self._send_message(message)
 
 
 class BatchError(Exception):
@@ -338,6 +470,11 @@ class RPCSessionBase(SessionBase):
             if isinstance(result, Exception):
                 self._bump_errors()
 
+    def connection_lost(self, exc):
+        # Cancel pending requests and message processing
+        self.connection.cancel_pending_requests()
+        super().connection_lost(exc)
+
     # External API
     def default_connection(self):
         '''Return a default connection if the user provides none.'''
@@ -382,116 +519,19 @@ class RPCSessionBase(SessionBase):
         return BatchRequest(self, raise_errors)
 
 
-class RPCClientSession(RPCSessionBase):
-    '''A client session.
-
-    To initiate a connection to the remote server call
-    create_connection().  Each successful call should have a
-    corresponding call to close().
-
-    Alternatively if used in a with statement, the connection is made
-    on entry to the block, and closed on exit from the block.
-    '''
-
-    def __init__(self, host=None, port=None, *, connection=None, framer=None,
-                 loop=None, proxy=None, **kwargs):
-        super().__init__(connection, framer, loop)
-        self.host = host
-        self.port = port
-        self.kwargs = kwargs
-        self.proxy = proxy
-        self.bw_limit = 0
-
-    async def create_connection(self):
-        '''Initiate a connection.'''
-        def self_func():
-            return self
-        if self.proxy:
-            return await self.proxy.create_connection(
-                self_func, self.host, self.port, **self.kwargs)
-
-        return await self.loop.create_connection(
-            self_func, self.host, self.port, **self.kwargs)
-
-    async def __aenter__(self):
-        await self.create_connection()
-        return self
-
-    async def __aexit__(self, exc_type, exc_value, traceback):
-        await self.close()
-
-
 class RPCServerSession(RPCSessionBase):
     '''A server session - created by a listening Server for each incoming
     connection.'''
 
 
-class MessageSessionBase(SessionBase):
-    '''Base class for protocols where messages are not tied to responses,
-    such as the Bitcoin protocol.'''
+class RPCClientSession(RPCSessionBase, ClientMixin):
+    '''An RPC client session.'''
 
-    async def _receive_messages(self, group):
-        while not self.is_closing():
-            try:
-                message = await self.framer.receive_message()
-            except BadMagicError as e:
-                magic, expected = e.args
-                self.logger.error(
-                    f'bad network magic: got {magic} expected {expected}, '
-                    f'disconnecting'
-                )
-                await self.close()
-            except OversizedPayloadError as e:
-                command, payload_len = e.args
-                self.logger.error(
-                    f'oversized payload of {payload_len:,d} bytes to command '
-                    f'{command}, disconnecting'
-                )
-                await self.close()
-            except BadChecksumError as e:
-                payload_checksum, claimed_checksum = e.args
-                self.logger.warning(
-                    f'checksum mismatch: payload {payload_checksum} '
-                    f'claimed {claimed_checksum}'
-                )
-                self._bump_errors()
-            else:
-                self.last_recv = time.time()
-                self.recv_count += 1
-                if self.recv_count % 10 == 0:
-                    await self._update_concurrency()
-                await group.spawn(self._throttled_message(message))
-
-    async def _throttled_message(self, message):
-        '''Process a single request, respecting the concurrency limit.'''
-        async with self.concurrency.semaphore:
-            try:
-                command, payload = message
-                await self.handle_message(command, payload)
-            except (ProtocolError, RPCError) as e:
-                self._bump_errors()
-            except CancelledError:
-                raise
-            except Exception:
-                self.logger.exception(f'exception handling {message}')
-                self._bump_errors()
-
-
-    # External API
-    async def handle_message(self, message):
-        '''message is a (command, payload) pair.'''
-        pass
-
-    async def send_message(self, message):
-        '''Send a message (command, payload) over the network.'''
-        await self._send_message(message)
-
-
-class BitcoinSession(MessageSessionBase):
-
-    def default_framer(self):
-        '''Return a bitcoin framer.'''
-        return BitcoinFramer(bytes.fromhex('e3e1f3e8'), 128_000_000)
+    def __init__(self, host=None, port=None, *, connection=None, framer=None,
+                 loop=None, proxy=None, **kwargs):
+        super().__init__(connection, framer, loop)
+        ClientMixin.__init__(self, host, port, proxy=proxy, **kwargs)
+        self.bw_limit = 0
 
 
 class Server(object):
