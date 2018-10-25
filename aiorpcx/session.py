@@ -24,12 +24,11 @@
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
-__all__ = ('RPCClientSession', 'RPCServerSession', 'Server', 'BatchError',
-           'MessageSession')
+__all__ = ('Connector', 'RPCSession', 'MessageSession', 'Server',
+           'BatchError')
 
 
 import asyncio
-import itertools
 import logging
 import time
 from contextlib import suppress
@@ -38,49 +37,50 @@ from aiorpcx import *
 from aiorpcx.util import Concurrency
 
 
-class ClientMixin(object):
-    '''A client session mixin.
+class Connector(object):
 
-    To initiate a connection to the remote server call
-    create_connection().  Each successful call should have a
-    corresponding call to close().
+    def __init__(self, session_factory, host=None, port=None, proxy=None,
+                 **kwargs):
+        self.session_factory = session_factory
+        self.host = host
+        self.port = port
+        self.proxy = proxy
+        self.loop = kwargs.get('loop', asyncio.get_event_loop())
+        self.kwargs = kwargs
+
+    async def create_connection(self):
+        '''Initiate a connection.'''
+        connector = self.proxy or self.loop
+        return await connector.create_connection(
+            self.session_factory, self.host, self.port, **self.kwargs)
+
+    async def __aenter__(self):
+        transport, self.protocol = await self.create_connection()
+        # By default, do not limit outgoing connections
+        self.protocol.bw_limit = 0
+        return self.protocol
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        await self.protocol.close()
+
+
+class SessionBase(asyncio.Protocol):
+    '''Base class of networking sessions.
+
+    There is no client / server distinction other than who initiated
+    the connection.
+
+    To initiate a connection to a remote server pass host, port and
+    proxy to the constructor, and then call create_connection().  Each
+    successful call should have a corresponding call to close().
 
     Alternatively if used in a with statement, the connection is made
     on entry to the block, and closed on exit from the block.
     '''
 
-    def __init__(self, host=None, port=None, *, proxy=None, **kwargs):
-        self.host = host
-        self.port = port
-        self.kwargs = kwargs
-        self.proxy = proxy
-
-    async def create_connection(self):
-        '''Initiate a connection.'''
-        def self_func():
-            return self
-
-        if self.proxy:
-            create_connection = self.proxy.create_connection
-        else:
-            create_connection = self.loop.create_connection
-
-        return await create_connection(self_func, self.host, self.port,
-                                       **self.kwargs)
-
-    async def __aenter__(self):
-        await self.create_connection()
-        return self
-
-    async def __aexit__(self, exc_type, exc_value, traceback):
-        await self.close()
-
-
-class SessionBase(asyncio.Protocol):
-
     max_errors = 10
 
-    def __init__(self, framer=None, loop=None):
+    def __init__(self, *, framer=None, loop=None):
         self.framer = framer or self.default_framer()
         self.loop = loop or asyncio.get_event_loop()
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -91,7 +91,7 @@ class SessionBase(asyncio.Protocol):
         # For logger.debug messsages
         self.verbosity = 0
         # Cleared when the send socket is full
-        self.can_send = asyncio.Event()
+        self.can_send = Event()
         self.can_send.set()
         # Statistics.  The RPC object also keeps its own statistics.
         self.start_time = time.time()
@@ -258,14 +258,6 @@ class MessageSession(SessionBase):
     To use as a client (connection-opening) session, pass host, port
     and perhaps a proxy.
     '''
-    def __init__(self, host=None, port=None, *, framer=None,
-                 loop=None, proxy=None, **kwargs):
-        super().__init__(framer, loop)
-        self.host = host
-        self.port = port
-        self.kwargs = kwargs
-        self.proxy = proxy
-
     async def _receive_messages(self, group):
         while not self.is_closing():
             try:
@@ -316,26 +308,6 @@ class MessageSession(SessionBase):
     def default_framer(self):
         '''Return a bitcoin framer.'''
         return BitcoinFramer(bytes.fromhex('e3e1f3e8'), 128_000_000)
-
-    async def create_connection(self):
-        '''Initiate a connection.'''
-        def self_func():
-            return self
-
-        if self.proxy:
-            create_connection = self.proxy.create_connection
-        else:
-            create_connection = self.loop.create_connection
-
-        return await create_connection(self_func, self.host, self.port,
-                                       **self.kwargs)
-
-    async def __aenter__(self):
-        await self.create_connection()
-        return self
-
-    async def __aexit__(self, exc_type, exc_value, traceback):
-        await self.close()
 
     async def handle_message(self, message):
         '''message is a (command, payload) pair.'''
@@ -416,12 +388,12 @@ class BatchRequest(object):
                     raise BatchError(self)
 
 
-class RPCSessionBase(SessionBase):
+class RPCSession(SessionBase):
     '''Base class for protocols where a message can lead to a response,
     for example JSON RPC.'''
 
-    def __init__(self, connection=None, framer=None, loop=None):
-        super().__init__(framer, loop)
+    def __init__(self, *, framer=None, loop=None, connection=None):
+        super().__init__(framer=framer, loop=loop)
         self.connection = connection or self.default_connection()
 
     async def _receive_messages(self, group):
@@ -517,21 +489,6 @@ class RPCSessionBase(SessionBase):
         BatchRequest doc string.
         '''
         return BatchRequest(self, raise_errors)
-
-
-class RPCServerSession(RPCSessionBase):
-    '''A server session - created by a listening Server for each incoming
-    connection.'''
-
-
-class RPCClientSession(RPCSessionBase, ClientMixin):
-    '''An RPC client session.'''
-
-    def __init__(self, host=None, port=None, *, connection=None, framer=None,
-                 loop=None, proxy=None, **kwargs):
-        super().__init__(connection, framer, loop)
-        ClientMixin.__init__(self, host, port, proxy=proxy, **kwargs)
-        self.bw_limit = 0
 
 
 class Server(object):

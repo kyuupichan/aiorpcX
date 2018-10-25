@@ -15,7 +15,7 @@ def raises_method_not_found(message):
     return RaiseTest(JSONRPC.METHOD_NOT_FOUND, message, RPCError)
 
 
-class MyServerSession(RPCServerSession):
+class MyServerSession(RPCSession):
 
     _current_server = None
     max_errors = 10
@@ -110,20 +110,21 @@ class TestServer:
         assert not asyncio_server.sockets
 
 
-class TestRPCClientSession:
+class TestRPCSession:
 
     @pytest.mark.asyncio
     async def test_proxy(self, server):
         proxy = SOCKSProxy(('localhost', 79), SOCKS5, None)
         with pytest.raises(OSError):
-            async with RPCClientSession('localhost', server.port,
-                                     proxy=proxy) as session:
+            async with Connector(RPCSession, 'localhost', server.port,
+                                 proxy=proxy) as session:
                 pass
 
     @pytest.mark.asyncio
     async def test_handlers(self, server):
         async with timeout_after(0.1):
-            async with RPCClientSession('localhost', server.port) as client:
+            async with Connector(RPCSession, 'localhost',
+                                 server.port) as client:
                 with raises_method_not_found('something'):
                     await client.send_request('something')
                 await client.send_notification('something')
@@ -131,19 +132,19 @@ class TestRPCClientSession:
 
     @pytest.mark.asyncio
     async def test_send_request(self, server):
-        async with RPCClientSession('localhost', server.port) as client:
+        async with Connector(RPCSession, 'localhost', server.port) as client:
             assert await client.send_request('echo', [23]) == 23
 
     @pytest.mark.asyncio
     async def test_send_request_buggy_handler(self, server):
-        async with RPCClientSession('localhost', server.port) as client:
+        async with Connector(RPCSession, 'localhost', server.port) as client:
             with RaiseTest(JSONRPC.INTERNAL_ERROR, 'internal server error',
                            RPCError):
                 await client.send_request('bug')
 
     @pytest.mark.asyncio
     async def test_unexpected_response(self, server, caplog):
-        async with RPCClientSession('localhost', server.port) as client:
+        async with Connector(RPCSession, 'localhost', server.port) as client:
             # A request not a notification so we don't exit immediately
             response = {"jsonrpc": "2.0", "result": 2, "id": -1}
             with caplog.at_level(logging.DEBUG):
@@ -152,21 +153,21 @@ class TestRPCClientSession:
 
     @pytest.mark.asyncio
     async def test_send_request_bad_args(self, server):
-        async with RPCClientSession('localhost', server.port) as client:
+        async with Connector(RPCSession, 'localhost', server.port) as client:
             # ProtocolError as it's a protocol violation
             with RaiseTest(JSONRPC.INVALID_ARGS, 'list', ProtocolError):
                 await client.send_request('echo', "23")
 
     @pytest.mark.asyncio
     async def test_send_request_timeout0(self, server):
-        async with RPCClientSession('localhost', server.port) as client:
+        async with Connector(RPCSession, 'localhost', server.port) as client:
             with pytest.raises(TaskTimeout):
                 async with timeout_after(0):
                     await client.send_request('echo', [23])
 
     @pytest.mark.asyncio
     async def test_send_request_timeout(self, server):
-        async with RPCClientSession('localhost', server.port) as client:
+        async with Connector(RPCSession, 'localhost', server.port) as client:
             server_session = await MyServerSession.current_server()
             with pytest.raises(TaskTimeout):
                 async with timeout_after(0.1):
@@ -176,7 +177,7 @@ class TestRPCClientSession:
 
     @pytest.mark.asyncio
     async def test_send_ill_formed(self, server):
-        async with RPCClientSession('localhost', server.port) as client:
+        async with Connector(RPCSession, 'localhost', server.port) as client:
             server_session = await MyServerSession.current_server()
             server_session.max_errors = 1
             await client._send_message(b'')
@@ -187,20 +188,20 @@ class TestRPCClientSession:
 
     @pytest.mark.asyncio
     async def test_send_notification(self, server):
-        async with RPCClientSession('localhost', server.port) as client:
+        async with Connector(RPCSession, 'localhost', server.port) as client:
             server = await MyServerSession.current_server()
             await client.send_notification('notify', ['test'])
         assert server.notifications == ['test']
 
     @pytest.mark.asyncio
     async def test_force_close(self, server):
-        async with RPCClientSession('localhost', server.port) as client:
+        async with Connector(RPCSession, 'localhost', server.port) as client:
             await client.close(force_after=0.001)
         assert not client.transport
 
     @pytest.mark.asyncio
     async def test_verbose_logging(self, server, caplog):
-        async with RPCClientSession('localhost', server.port) as client:
+        async with Connector(RPCSession, 'localhost', server.port) as client:
             client.verbosity = 4
             with caplog.at_level(logging.DEBUG):
                 await client.send_request('echo', ['wait'])
@@ -209,9 +210,8 @@ class TestRPCClientSession:
 
     @pytest.mark.asyncio
     async def test_framer_MemoryError(self, server, caplog):
-        framer = NewlineFramer(5)
-        async with RPCClientSession('localhost', server.port,
-                                 framer=framer) as client:
+        factory = partial(RPCSession, framer=NewlineFramer(5))
+        async with Connector(factory, 'localhost', server.port) as client:
             msg = 'w' * 50
             raw_msg = msg.encode()
             # Even though long it will be sent in one bit
@@ -225,7 +225,7 @@ class TestRPCClientSession:
 
     @pytest.mark.asyncio
     async def test_peer_address(self, server):
-        async with RPCClientSession('localhost', server.port) as client:
+        async with Connector(RPCSession, 'localhost', server.port) as client:
             pa = client.peer_address()
             if pa[0] == '::1':
                 assert client.peer_address_str() == f'[::1]:{server.port}'
@@ -246,13 +246,13 @@ class TestRPCClientSession:
         loop = asyncio.get_event_loop()
         tasks = asyncio.Task.all_tasks(loop)
         try:
-            client = RPCClientSession('localhost', 0)
+            client = Connector(RPCSession, 'localhost', 0)
             await client.create_connection()
         except OSError:
             pass
         assert asyncio.Task.all_tasks(loop) == tasks
 
-        async with RPCClientSession('localhost', server.port):
+        async with Connector(RPCSession, 'localhost', server.port):
             pass
 
         await asyncio.sleep(0.001)  # Yield to event loop
@@ -268,7 +268,7 @@ class TestRPCClientSession:
             if len(called) == limit:
                 client.pause_writing()
 
-        async with RPCClientSession('localhost', server.port) as client:
+        async with Connector(RPCSession, 'localhost', server.port) as client:
             try:
                 client.transport.write = my_write
             except AttributeError:    # uvloop: transport.write is read-only
@@ -294,7 +294,7 @@ class TestRPCClientSession:
 
     @pytest.mark.asyncio
     async def test_concurrency(self, server):
-        async with RPCClientSession('localhost', server.port) as client:
+        async with Connector(RPCSession, 'localhost', server.port) as client:
             client.bw_limit = 1_000_000
             # Test high bw usage crushes concurrency to 1
             client.bw_charge = 1_000_000_000
@@ -308,7 +308,7 @@ class TestRPCClientSession:
 
     @pytest.mark.asyncio
     async def test_concurrency_bw_limit_0(self, server):
-        async with RPCClientSession('localhost', server.port) as client:
+        async with Connector(RPCSession, 'localhost', server.port) as client:
             # Test high bw usage crushes concurrency to 1
             client.bw_charge = 1000 * 1000 * 1000
             client.bw_limit = 0
@@ -319,7 +319,8 @@ class TestRPCClientSession:
     @pytest.mark.asyncio
     async def test_close_on_many_errors(self, server):
         try:
-            async with RPCClientSession('localhost', server.port) as client:
+            async with Connector(RPCSession, 'localhost',
+                                 server.port) as client:
                 server_session = await MyServerSession.current_server()
                 for n in range(server_session.max_errors + 1):
                     with suppress(RPCError):
@@ -330,7 +331,7 @@ class TestRPCClientSession:
 
     @pytest.mark.asyncio
     async def test_send_empty_batch(self, server):
-        async with RPCClientSession('localhost', server.port) as client:
+        async with Connector(RPCSession, 'localhost', server.port) as client:
             with RaiseTest(JSONRPC.INVALID_REQUEST, 'empty', ProtocolError):
                 async with client.send_batch() as batch:
                     pass
@@ -340,7 +341,7 @@ class TestRPCClientSession:
 
     @pytest.mark.asyncio
     async def test_send_batch(self, server):
-        async with RPCClientSession('localhost', server.port) as client:
+        async with Connector(RPCSession, 'localhost', server.port) as client:
             async with client.send_batch() as batch:
                 batch.add_request("echo", [1])
                 batch.add_notification("echo", [2])
@@ -354,7 +355,7 @@ class TestRPCClientSession:
 
     @pytest.mark.asyncio
     async def test_send_batch_errors_quiet(self, server):
-        async with RPCClientSession('localhost', server.port) as client:
+        async with Connector(RPCSession, 'localhost', server.port) as client:
             async with client.send_batch() as batch:
                 batch.add_request("echo", [1])
                 batch.add_request("bug")
@@ -367,7 +368,7 @@ class TestRPCClientSession:
 
     @pytest.mark.asyncio
     async def test_send_batch_errors(self, server):
-        async with RPCClientSession('localhost', server.port) as client:
+        async with Connector(RPCSession, 'localhost', server.port) as client:
             with pytest.raises(BatchError) as e:
                 async with client.send_batch(raise_errors=True) as batch:
                     batch.add_request("echo", [1])
@@ -382,13 +383,13 @@ class TestRPCClientSession:
 
     @pytest.mark.asyncio
     async def test_send_batch_bad_request(self, server):
-        async with RPCClientSession('localhost', server.port) as client:
+        async with Connector(RPCSession, 'localhost', server.port) as client:
             with RaiseTest(JSONRPC.METHOD_NOT_FOUND, 'string', ProtocolError):
                 async with client.send_batch() as batch:
                     batch.add_request(23)
 
 
-class MyClientSession(RPCClientSession):
+class RPCClient(RPCSession):
     # For tests of wire messages
     def connection_made(self, transport):
         self.transport = transport
@@ -409,7 +410,7 @@ class TestWireResponses(object):
 
     @pytest.mark.asyncio
     async def test_send_request(self, server):
-        async with MyClientSession('localhost', server.port) as client:
+        async with Connector(RPCClient, 'localhost', server.port) as client:
             item = {"jsonrpc": "2.0", "method": "echo", "params": [[42, 43]],
                     "id": 1}
             await client.send(item)
@@ -418,7 +419,7 @@ class TestWireResponses(object):
 
     @pytest.mark.asyncio
     async def test_send_request_named(self, server):
-        async with MyClientSession('localhost', server.port) as client:
+        async with Connector(RPCClient, 'localhost', server.port) as client:
             item = {"jsonrpc": "2.0", "method": "echo", "params":
                     {"value" : [42, 43]}, "id": 3}
             await client.send(item)
@@ -427,7 +428,7 @@ class TestWireResponses(object):
 
     @pytest.mark.asyncio
     async def test_send_notification(self, server):
-        async with MyClientSession('localhost', server.port) as client:
+        async with Connector(RPCClient, 'localhost', server.port) as client:
             item = {"jsonrpc": "2.0", "method": "echo", "params": [[42, 43]]}
             await client.send(item)
             with pytest.raises(TaskTimeout):
@@ -436,7 +437,7 @@ class TestWireResponses(object):
 
     @pytest.mark.asyncio
     async def test_send_non_existent_notification(self, server):
-        async with MyClientSession('localhost', server.port) as client:
+        async with Connector(RPCClient, 'localhost', server.port) as client:
             item = {"jsonrpc": "2.0", "method": "zz", "params": [[42, 43]]}
             await client.send(item)
             with pytest.raises(TaskTimeout):
@@ -445,7 +446,7 @@ class TestWireResponses(object):
 
     @pytest.mark.asyncio
     async def test_send_non_existent_method(self, server):
-        async with MyClientSession('localhost', server.port) as client:
+        async with Connector(RPCClient, 'localhost', server.port) as client:
             item = {"jsonrpc": "2.0", "method": "foobar", "id": 0}
             await client.send(item)
             assert await client.response() == {
@@ -454,7 +455,7 @@ class TestWireResponses(object):
 
     @pytest.mark.asyncio
     async def test_send_invalid_json(self, server):
-        async with MyClientSession('localhost', server.port) as client:
+        async with Connector(RPCClient, 'localhost', server.port) as client:
             item = '{"jsonrpc": "2.0", "method": "foobar, "params": "bar", "b]'
             await client.send(item)
             assert await client.response() == {
@@ -463,7 +464,7 @@ class TestWireResponses(object):
 
     @pytest.mark.asyncio
     async def test_send_invalid_request_object(self, server):
-        async with MyClientSession('localhost', server.port) as client:
+        async with Connector(RPCClient, 'localhost', server.port) as client:
             item = {"jsonrpc": "2.0", "method": 1, "params": "bar"}
             await client.send(item)
             assert await client.response() == {
@@ -473,7 +474,7 @@ class TestWireResponses(object):
 
     @pytest.mark.asyncio
     async def test_send_batch_invalid_json(self, server):
-        async with MyClientSession('localhost', server.port) as client:
+        async with Connector(RPCClient, 'localhost', server.port) as client:
             item = ('[{"jsonrpc": "2.0", "method": "sum", "params": [1,2,4],'
                     '"id": "1"}, {"jsonrpc": "2.0", "method"  ]')
             await client.send(item)
@@ -483,7 +484,7 @@ class TestWireResponses(object):
 
     @pytest.mark.asyncio
     async def test_send_empty_batch(self, server):
-        async with MyClientSession('localhost', server.port) as client:
+        async with Connector(RPCClient, 'localhost', server.port) as client:
             item = []
             await client.send(item)
             assert await client.response() == {
@@ -492,7 +493,7 @@ class TestWireResponses(object):
 
     @pytest.mark.asyncio
     async def test_send_invalid_batch(self, server):
-        async with MyClientSession('localhost', server.port) as client:
+        async with Connector(RPCClient, 'localhost', server.port) as client:
             item = [1]
             await client.send(item)
             assert await client.response() == [{
@@ -502,7 +503,7 @@ class TestWireResponses(object):
 
     @pytest.mark.asyncio
     async def test_send_invalid_batch_3(self, server):
-        async with MyClientSession('localhost', server.port) as client:
+        async with Connector(RPCClient, 'localhost', server.port) as client:
             item = [1, 2, 3]
             await client.send(item)
             assert await client.response() == [{
@@ -512,7 +513,7 @@ class TestWireResponses(object):
 
     @pytest.mark.asyncio
     async def test_send_partly_invalid_batch(self, server):
-        async with MyClientSession('localhost', server.port) as client:
+        async with Connector(RPCClient, 'localhost', server.port) as client:
             item = [1, {"jsonrpc": "2.0", "method": "echo", "params": [42],
                         "id": 0}]
             await client.send(item)
@@ -524,7 +525,7 @@ class TestWireResponses(object):
 
     @pytest.mark.asyncio
     async def test_send_mixed_batch(self, server):
-        async with MyClientSession('localhost', server.port) as client:
+        async with Connector(RPCClient, 'localhost', server.port) as client:
             item = [
                 {"jsonrpc": "2.0", "method": "echo", "params": [40], "id": 3},
                 {"jsonrpc": "2.0", "method": "echo", "params": [42]},
@@ -538,7 +539,7 @@ class TestWireResponses(object):
 
     @pytest.mark.asyncio
     async def test_send_notification_batch(self, server):
-        async with MyClientSession('localhost', server.port) as client:
+        async with Connector(RPCClient, 'localhost', server.port) as client:
             item = [{"jsonrpc": "2.0", "method": "echo", "params": [42]}] * 2
             await client.send(item)
             with pytest.raises(TaskTimeout):
@@ -548,7 +549,7 @@ class TestWireResponses(object):
 
 @pytest.mark.asyncio
 async def test_base_class_implementation():
-    session = RPCClientSession()
+    session = RPCSession()
     await session.handle_request(Request('', []))
     from aiorpcx.session import SessionBase
     with pytest.raises(NotImplementedError):
@@ -557,14 +558,14 @@ async def test_base_class_implementation():
 
 def test_default_and_passed_connection():
     connection = JSONRPCConnection(JSONRPCv1)
-    class MyClientSession(RPCClientSession):
+    class RPCClient(RPCSession):
         def default_connection(self):
             return connection
 
-    session = MyClientSession()
+    session = RPCClient()
     assert session.connection == connection
 
-    session = RPCClientSession(connection=connection)
+    session = RPCSession(connection=connection)
     assert session.connection == connection
 
 
@@ -607,7 +608,8 @@ class TestMessageSession(object):
 
     @pytest.mark.asyncio
     async def test_basic_send(self, msg_server):
-        async with MessageSession('localhost', msg_server.port) as client:
+        async with Connector(MessageSession, 'localhost',
+                             msg_server.port) as client:
             server_session = await MessageServer.current_server()
             await client.send_message((b'version', b'abc'))
         assert server_session.messages == [(b'version', b'abc')]
@@ -615,7 +617,8 @@ class TestMessageSession(object):
     @pytest.mark.asyncio
     async def test_many_sends(self, msg_server):
         count = 12
-        async with MessageSession('localhost', msg_server.port) as client:
+        async with Connector(MessageSession, 'localhost',
+                             msg_server.port) as client:
             server_session = await MessageServer.current_server()
             for n in range(count):
                 await client.send_message((b'version', b'abc'))
@@ -623,7 +626,8 @@ class TestMessageSession(object):
 
     @pytest.mark.asyncio
     async def test_errors(self, msg_server, caplog):
-        async with MessageSession('localhost', msg_server.port) as client:
+        async with Connector(MessageSession, 'localhost',
+                             msg_server.port) as client:
             await client.send_message((b'syntax', b''))
             await client.send_message((b'protocol', b''))
             await client.send_message((b'cancel', b''))
@@ -632,7 +636,8 @@ class TestMessageSession(object):
 
     @pytest.mark.asyncio
     async def test_bad_magic(self, msg_server, caplog):
-        async with MessageSession('localhost', msg_server.port) as client:
+        async with Connector(MessageSession, 'localhost',
+                             msg_server.port) as client:
             msg = bytearray(client.framer.frame((b'version', b'')))
             msg[0] = msg[0] ^ 1
             client.transport.write(msg)
@@ -640,7 +645,8 @@ class TestMessageSession(object):
 
     @pytest.mark.asyncio
     async def test_bad_checksum(self, msg_server, caplog):
-        async with MessageSession('localhost', msg_server.port) as client:
+        async with Connector(MessageSession, 'localhost',
+                             msg_server.port) as client:
             msg = bytearray(client.framer.frame((b'version', b'')))
             msg[-1] = msg[-1] ^ 1
             client.transport.write(msg)
@@ -648,11 +654,13 @@ class TestMessageSession(object):
 
     @pytest.mark.asyncio
     async def test_oversized_message(self, msg_server, caplog):
-        async with MessageSession('localhost', msg_server.port) as client:
+        async with Connector(MessageSession, 'localhost',
+                             msg_server.port) as client:
             big = 1024 * 1024
             await client.send_message((b'version', bytes(big)))
         assert not in_caplog(caplog, 'oversized payload')
-        async with MessageSession('localhost', msg_server.port) as client:
+        async with Connector(MessageSession, 'localhost',
+                             msg_server.port) as client:
             await client.send_message((b'version', bytes(big + 1)))
         assert in_caplog(caplog, 'oversized payload')
 
@@ -660,8 +668,8 @@ class TestMessageSession(object):
     async def test_proxy(self, msg_server):
         proxy = SOCKSProxy(('localhost', 79), SOCKS5, None)
         with pytest.raises(OSError):
-            async with MessageSession('localhost', msg_server.port,
-                                      proxy=proxy):
+            async with Connector(MessageSession, 'localhost',
+                                 msg_server.port, proxy=proxy):
                 pass
 
     @pytest.mark.asyncio
