@@ -1,8 +1,21 @@
 ChangeLog
 =========
 
-.. note:: The aiorpcX API changed quite a bit for version 0.6 and
-          is still unstable
+.. note:: The aiorpcX API changes regularly and is still unstable
+
+Version 0.9.0 (25 Oct 2018)
+---------------------------
+
+* support of binary messaging and framing
+* support of plain messaging protocols.  Messages do not have an ID
+  and do not expect a response; any response cannot reference the
+  message causing it as it has no ID (e.g. the Bitcoin network
+  protocol).
+* removed the client / server session distinction.  As a result there
+  is now only a single session class for JSONRPC-style messaging,
+  namely RPCSession, and a single session class for plain messaging
+  protocols, MessageSession.  Client connections are initiated by the
+  session-independent Connector class.
 
 Version 0.8.2 (25 Sep 2018)
 ---------------------------
@@ -105,3 +118,4 @@ Version 0.5.6
 .. _#3: https://github.com/kyuupichan/aiorpcX/issues/3
 .. _#4: https://github.com/kyuupichan/aiorpcX/issues/4
 .. _#5: https://github.com/kyuupichan/aiorpcX/issues/5
+.. _#8: https://github.com/kyuupichan/aiorpcX/issues/8
