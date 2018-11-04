@@ -148,18 +148,26 @@ class SessionBase(asyncio.Protocol):
             if await group.next_done() is None:
                 break
 
+    async def _limited_wait(self, secs):
+        # Wait at most secs seconds to send, otherwise abort the connection
+        try:
+            async with timeout_after(secs):
+                await self.can_send.wait()
+        except TaskTimeout:
+            self.abort()
+
     async def _send_message(self, message):
-        if self.is_closing():
-            return
-        await self.can_send.wait()
-        framed_message = self.framer.frame(message)
-        self.send_size += len(framed_message)
-        self._using_bandwidth(len(framed_message))
-        self.send_count += 1
-        self.last_send = time.time()
-        if self.verbosity >= 4:
-            self.logger.debug(f'Sending framed message {framed_message}')
-        self.transport.write(framed_message)
+        if not self.can_send.is_set():
+            await self._limited_wait(self.max_send_delay)
+        if not self.is_closing():
+            framed_message = self.framer.frame(message)
+            self.send_size += len(framed_message)
+            self._using_bandwidth(len(framed_message))
+            self.send_count += 1
+            self.last_send = time.time()
+            if self.verbosity >= 4:
+                self.logger.debug(f'Sending framed message {framed_message}')
+            self.transport.write(framed_message)
 
     def _bump_errors(self):
         self.errors += 1

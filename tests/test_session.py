@@ -293,6 +293,21 @@ class TestRPCSession:
             client.resume_writing()
 
     @pytest.mark.asyncio
+    async def test_slow_connection_aborted(self, server):
+        async with Connector(RPCSession, 'localhost', server.port) as client:
+            assert client.max_send_delay >= 10
+            client.max_send_delay = 0.001
+            client.pause_writing()
+            assert not client.can_send.is_set()
+            # Test all 3 tasks complete
+            async with TaskGroup() as group:
+                await group.spawn(client._send_message(b'a'))
+                await group.spawn(client._send_message(b'a'))
+                await group.spawn(client._send_message(b'a'))
+            assert client.can_send.is_set()
+            assert client.is_closing()
+
+    @pytest.mark.asyncio
     async def test_concurrency(self, server):
         async with Connector(RPCSession, 'localhost', server.port) as client:
             client.bw_limit = 1_000_000
