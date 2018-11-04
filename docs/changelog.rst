@@ -3,6 +3,11 @@ ChangeLog
 
 .. note:: The aiorpcX API changes regularly and is still unstable
 
+Version 0.9.1 (04 Nov 2018)
+---------------------------
+
+* abort sessions which wait too long to send a message
+
 Version 0.9.0 (25 Oct 2018)
 ---------------------------
 
