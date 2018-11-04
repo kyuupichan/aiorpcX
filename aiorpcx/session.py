@@ -93,6 +93,8 @@ class SessionBase(asyncio.Protocol):
         # Cleared when the send socket is full
         self.can_send = Event()
         self.can_send.set()
+        # Force-close a connection if a send doesn't succeed in this time
+        self.max_send_delay = 60
         # Statistics.  The RPC object also keeps its own statistics.
         self.start_time = time.time()
         self.errors = 0
@@ -176,8 +178,9 @@ class SessionBase(asyncio.Protocol):
 
     def pause_writing(self):
         '''Transport calls when the send buffer is full.'''
-        self.can_send.clear()
-        self.transport.pause_reading()
+        if not self.is_closing():
+            self.can_send.clear()
+            self.transport.pause_reading()
 
     def resume_writing(self):
         '''Transport calls when the send buffer has room.'''
@@ -208,6 +211,8 @@ class SessionBase(asyncio.Protocol):
         self._address = None
         self.transport = None
         self.pm_task.cancel()
+        # Release waiting tasks
+        self.can_send.set()
 
     # External API
     def default_framer(self):
@@ -238,6 +243,11 @@ class SessionBase(asyncio.Protocol):
         '''Return True if the connection is closing.'''
         return not self.transport or self.transport.is_closing()
 
+    def abort(self):
+        '''Forcefully close the connection.'''
+        if self.transport:
+            self.transport.abort()
+
     async def close(self, *, force_after=30):
         '''Close the connection and return when closed.'''
         if self.transport:
@@ -246,8 +256,7 @@ class SessionBase(asyncio.Protocol):
             with suppress(CancelledError):
                 async with ignore_after(force_after):
                     await self.pm_task
-                if self.transport:
-                    self.transport.abort()
+                self.abort()
                 await self.pm_task
 
 
