@@ -91,8 +91,10 @@ class SessionBase(asyncio.Protocol):
         # For logger.debug messsages
         self.verbosity = 0
         # Cleared when the send socket is full
-        self.can_send = Event()
-        self.can_send.set()
+        self._can_send = Event()
+        self._can_send.set()
+        self._pm_task = None
+        self._task_group = None
         # Force-close a connection if a send doesn't succeed in this time
         self.max_send_delay = 60
         # Statistics.  The RPC object also keeps its own statistics.
@@ -110,8 +112,7 @@ class SessionBase(asyncio.Protocol):
         self.bw_charge = 0
         # Concurrency control
         self.max_concurrent = 6
-        self.concurrency = Concurrency(self.max_concurrent)
-        self.pm_task = None
+        self._concurrency = Concurrency(self.max_concurrent)
 
     async def _update_concurrency(self):
         # A non-positive value means not to limit concurrency
@@ -125,11 +126,11 @@ class SessionBase(asyncio.Protocol):
         # Reduce concurrency allocation by 1 for each whole bw_limit used
         throttle = int(self.bw_charge / self.bw_limit)
         target = max(1, self.max_concurrent - throttle)
-        current = self.concurrency.max_concurrent
+        current = self._concurrency.max_concurrent
         if target != current:
             self.logger.info(f'changing task concurrency from {current} '
                              f'to {target}')
-            await self.concurrency.set_max_concurrent(target)
+            await self._concurrency.set_max_concurrent(target)
 
     def _using_bandwidth(self, size):
         '''Called when sending or receiving size bytes.'''
@@ -139,25 +140,30 @@ class SessionBase(asyncio.Protocol):
         '''Process incoming messages asynchronously and consume the
         results.
         '''
-        async with TaskGroup() as group:
-            await group.spawn(self._receive_messages, group)
-            await group.spawn(self._collect_tasks, group)
+        try:
+            async with TaskGroup() as group:
+                self._task_group = group
+                await self.spawn(self._receive_messages)
+                await self.spawn(self._collect_tasks)
+        finally:
+            self._task_group = None
 
-    async def _collect_tasks(self, group):
+    async def _collect_tasks(self):
+        next_done = self._task_group.next_done
         while True:
-            if await group.next_done() is None:
-                break
+            await next_done()
 
     async def _limited_wait(self, secs):
         # Wait at most secs seconds to send, otherwise abort the connection
         try:
             async with timeout_after(secs):
-                await self.can_send.wait()
+                await self._can_send.wait()
         except TaskTimeout:
             self.abort()
+            raise
 
     async def _send_message(self, message):
-        if not self.can_send.is_set():
+        if not self._can_send.is_set():
             await self._limited_wait(self.max_send_delay)
         if not self.is_closing():
             framed_message = self.framer.frame(message)
@@ -187,13 +193,13 @@ class SessionBase(asyncio.Protocol):
     def pause_writing(self):
         '''Transport calls when the send buffer is full.'''
         if not self.is_closing():
-            self.can_send.clear()
+            self._can_send.clear()
             self.transport.pause_reading()
 
     def resume_writing(self):
         '''Transport calls when the send buffer has room.'''
-        if not self.can_send.is_set():
-            self.can_send.set()
+        if not self._can_send.is_set():
+            self._can_send.set()
             self.transport.resume_reading()
 
     def connection_made(self, transport):
@@ -210,7 +216,7 @@ class SessionBase(asyncio.Protocol):
             self._proxy_address = peer_address
         else:
             self._address = peer_address
-        self.pm_task = spawn_sync(self._process_messages(), loop=self.loop)
+        self._pm_task = spawn_sync(self._process_messages(), loop=self.loop)
 
     def connection_lost(self, exc):
         '''Called by asyncio when the connection closes.
@@ -218,9 +224,9 @@ class SessionBase(asyncio.Protocol):
         Tear down things done in connection_made.'''
         self._address = None
         self.transport = None
-        self.pm_task.cancel()
+        self._pm_task.cancel()
         # Release waiting tasks
-        self.can_send.set()
+        self._can_send.set()
 
     # External API
     def default_framer(self):
@@ -247,6 +253,10 @@ class SessionBase(asyncio.Protocol):
         else:
             return f'{ip_addr_str}:{port}'
 
+    async def spawn(self, coro, *args):
+        if self._task_group:
+            await self._task_group.spawn(coro, *args)
+
     def is_closing(self):
         '''Return True if the connection is closing.'''
         return not self.transport or self.transport.is_closing()
@@ -260,12 +270,12 @@ class SessionBase(asyncio.Protocol):
         '''Close the connection and return when closed.'''
         if self.transport:
             self.transport.close()
-        if self.pm_task:
+        if self._pm_task:
             with suppress(CancelledError):
                 async with ignore_after(force_after):
-                    await self.pm_task
+                    await self._pm_task
                 self.abort()
-                await self.pm_task
+                await self._pm_task
 
 
 class MessageSession(SessionBase):
@@ -275,7 +285,7 @@ class MessageSession(SessionBase):
     To use as a client (connection-opening) session, pass host, port
     and perhaps a proxy.
     '''
-    async def _receive_messages(self, group):
+    async def _receive_messages(self):
         while not self.is_closing():
             try:
                 message = await self.framer.receive_message()
@@ -305,11 +315,11 @@ class MessageSession(SessionBase):
                 self.recv_count += 1
                 if self.recv_count % 10 == 0:
                     await self._update_concurrency()
-                await group.spawn(self._throttled_message(message))
+                await self.spawn(self._throttled_message(message))
 
     async def _throttled_message(self, message):
         '''Process a single request, respecting the concurrency limit.'''
-        async with self.concurrency.semaphore:
+        async with self._concurrency.semaphore:
             try:
                 await self.handle_message(message)
             except ProtocolError as e:
@@ -413,7 +423,7 @@ class RPCSession(SessionBase):
         super().__init__(framer=framer, loop=loop)
         self.connection = connection or self.default_connection()
 
-    async def _receive_messages(self, group):
+    async def _receive_messages(self):
         while not self.is_closing():
             try:
                 message = await self.framer.receive_message()
@@ -437,11 +447,11 @@ class RPCSession(SessionBase):
                 self._bump_errors()
             else:
                 for request in requests:
-                    await group.spawn(self._throttled_request(request))
+                    await self.spawn(self._throttled_request(request))
 
     async def _throttled_request(self, request):
         '''Process a single request, respecting the concurrency limit.'''
-        async with self.concurrency.semaphore:
+        async with self._concurrency.semaphore:
             try:
                 result = await self.handle_request(request)
             except (ProtocolError, RPCError) as e:

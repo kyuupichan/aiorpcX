@@ -298,13 +298,12 @@ class TestRPCSession:
             assert client.max_send_delay >= 10
             client.max_send_delay = 0.001
             client.pause_writing()
-            assert not client.can_send.is_set()
-            # Test all 3 tasks complete
-            async with TaskGroup() as group:
-                await group.spawn(client._send_message(b'a'))
-                await group.spawn(client._send_message(b'a'))
-                await group.spawn(client._send_message(b'a'))
-            assert client.can_send.is_set()
+            assert not client._can_send.is_set()
+            tasks = [await spawn(client._send_message(b'a'))
+                     for n in range(3)]
+            await sleep(client.max_send_delay * 2)
+            assert all(task.cancelled() for task in tasks)
+            assert client._can_send.is_set()
             assert client.is_closing()
 
     @pytest.mark.asyncio
@@ -313,13 +312,13 @@ class TestRPCSession:
             client.bw_limit = 1_000_000
             # Test high bw usage crushes concurrency to 1
             client.bw_charge = 1_000_000_000
-            prior_mc = client.concurrency.max_concurrent
+            prior_mc = client._concurrency.max_concurrent
             await client._update_concurrency()
-            assert 1 == client.concurrency.max_concurrent < prior_mc
+            assert 1 == client._concurrency.max_concurrent < prior_mc
             # Test passage of time restores it
             client.bw_time -= 1000 * 1000 * 1000
             await client._update_concurrency()
-            assert client.concurrency.max_concurrent == prior_mc
+            assert client._concurrency.max_concurrent == prior_mc
 
     @pytest.mark.asyncio
     async def test_concurrency_bw_limit_0(self, server):
@@ -327,9 +326,9 @@ class TestRPCSession:
             # Test high bw usage crushes concurrency to 1
             client.bw_charge = 1000 * 1000 * 1000
             client.bw_limit = 0
-            prior_mc = client.concurrency.max_concurrent
+            prior_mc = client._concurrency.max_concurrent
             await client._update_concurrency()
-            assert client.concurrency.max_concurrent == prior_mc
+            assert client._concurrency.max_concurrent == prior_mc
 
     @pytest.mark.asyncio
     async def test_close_on_many_errors(self, server):
