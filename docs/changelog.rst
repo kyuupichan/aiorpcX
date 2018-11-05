@@ -3,6 +3,12 @@ ChangeLog
 
 .. note:: The aiorpcX API changes regularly and is still unstable
 
+Version 0.10.0 (05 Nov 2018)
+---------------------------
+
+* add session.spawn() method
+* make various member variables private
+
 Version 0.9.1 (04 Nov 2018)
 ---------------------------
 
