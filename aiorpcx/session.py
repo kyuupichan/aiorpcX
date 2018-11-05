@@ -254,8 +254,12 @@ class SessionBase(asyncio.Protocol):
             return f'{ip_addr_str}:{port}'
 
     async def spawn(self, coro, *args):
+        '''If the session is connected, spawn a task that is cancelled
+        on disconnect, and return it.  Otherwise return None.'''
         if self._task_group:
-            await self._task_group.spawn(coro, *args)
+            return await self._task_group.spawn(coro, *args)
+        else:
+            return None
 
     def is_closing(self):
         '''Return True if the connection is closing.'''
