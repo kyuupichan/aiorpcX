@@ -179,6 +179,10 @@ class SessionBase(asyncio.Protocol):
         self.errors += 1
         if self.errors >= self.max_errors:
             # Don't await self.close() because that is self-cancelling
+            self._close()
+
+    def _close(self):
+        if self.transport:
             self.transport.close()
 
     # asyncio framework
@@ -272,8 +276,7 @@ class SessionBase(asyncio.Protocol):
 
     async def close(self, *, force_after=30):
         '''Close the connection and return when closed.'''
-        if self.transport:
-            self.transport.close()
+        self._close()
         if self._pm_task:
             with suppress(CancelledError):
                 async with ignore_after(force_after):
@@ -299,14 +302,14 @@ class MessageSession(SessionBase):
                     f'bad network magic: got {magic} expected {expected}, '
                     f'disconnecting'
                 )
-                self.transport.close()
+                self._close()
             except OversizedPayloadError as e:
                 command, payload_len = e.args
                 self.logger.error(
                     f'oversized payload of {payload_len:,d} bytes to command '
                     f'{command}, disconnecting'
                 )
-                self.transport.close()
+                self._close()
             except BadChecksumError as e:
                 payload_checksum, claimed_checksum = e.args
                 self.logger.warning(
