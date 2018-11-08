@@ -140,13 +140,10 @@ class SessionBase(asyncio.Protocol):
         '''Process incoming messages asynchronously and consume the
         results.
         '''
-        try:
-            async with TaskGroup() as group:
-                self._task_group = group
-                await self.spawn(self._receive_messages)
-                await self.spawn(self._collect_tasks)
-        finally:
-            self._task_group = None
+        async with TaskGroup() as group:
+            self._task_group = group
+            await self.spawn(self._receive_messages)
+            await self.spawn(self._collect_tasks)
 
     async def _collect_tasks(self):
         next_done = self._task_group.next_done
@@ -260,8 +257,9 @@ class SessionBase(asyncio.Protocol):
     async def spawn(self, coro, *args):
         '''If the session is connected, spawn a task that is cancelled
         on disconnect, and return it.  Otherwise return None.'''
-        if self._task_group:
-            return await self._task_group.spawn(coro, *args)
+        group = self._task_group
+        if group and not group.closed():
+            return await group.spawn(coro, *args)
         else:
             return None
 
