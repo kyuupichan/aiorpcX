@@ -94,7 +94,7 @@ class SessionBase(asyncio.Protocol):
         self._can_send = Event()
         self._can_send.set()
         self._pm_task = None
-        self._task_group = None
+        self._task_group = TaskGroup()
         # Force-close a connection if a send doesn't succeed in this time
         self.max_send_delay = 60
         # Statistics.  The RPC object also keeps its own statistics.
@@ -140,15 +140,15 @@ class SessionBase(asyncio.Protocol):
         '''Process incoming messages asynchronously and consume the
         results.
         '''
-        async with TaskGroup() as group:
-            self._task_group = group
-            await self.spawn(self._receive_messages)
-            await self.spawn(self._collect_tasks)
+        async def collect_tasks():
+            next_done = task_group.next_done
+            while True:
+                await next_done()
 
-    async def _collect_tasks(self):
-        next_done = self._task_group.next_done
-        while True:
-            await next_done()
+        task_group = self._task_group
+        async with task_group:
+            await self.spawn(self._receive_messages)
+            await self.spawn(collect_tasks)
 
     async def _limited_wait(self, secs):
         # Wait at most secs seconds to send, otherwise abort the connection
@@ -258,7 +258,7 @@ class SessionBase(asyncio.Protocol):
         '''If the session is connected, spawn a task that is cancelled
         on disconnect, and return it.  Otherwise return None.'''
         group = self._task_group
-        if group and not group.closed():
+        if not group.closed():
             return await group.spawn(coro, *args)
         else:
             return None
