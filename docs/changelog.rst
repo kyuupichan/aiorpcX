@@ -3,6 +3,11 @@ ChangeLog
 
 .. note:: The aiorpcX API changes regularly and is still unstable
 
+Version 0.10.1 (07 Nov 2018)
+---------------------------
+
+* bugfixes for transport closing and session task spawning
+
 Version 0.10.0 (05 Nov 2018)
 ---------------------------
 
