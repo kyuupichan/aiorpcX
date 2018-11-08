@@ -208,7 +208,6 @@ class TaskGroup(object):
                     return
         finally:
             await self.cancel_remaining()
-            self._closed = True
 
         if errored(task):
             raise task.exception()
@@ -216,11 +215,13 @@ class TaskGroup(object):
     async def cancel_remaining(self):
         '''Cancel all remaining tasks.'''
         self._closed = True
-        pending = list(self._pending)
-        for task in pending:
+        for task in list(self._pending):
             task.cancel()
             with suppress(CancelledError):
                 await task
+
+    def closed(self):
+        return self._closed
 
     def __aiter__(self):
         return self
