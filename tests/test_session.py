@@ -307,6 +307,14 @@ class TestRPCSession:
             assert client.is_closing()
 
     @pytest.mark.asyncio
+    async def test_spawn(self, server):
+        async with Connector(RPCSession, 'localhost', server.port) as client:
+            task = await client.spawn(sleep(0.001))
+            assert task is not None
+        task = await client.spawn(sleep(0.001))
+        assert task is None
+
+    @pytest.mark.asyncio
     async def test_concurrency(self, server):
         async with Connector(RPCSession, 'localhost', server.port) as client:
             client.bw_limit = 1_000_000
