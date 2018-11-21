@@ -92,6 +92,8 @@ class TaskGroup(object):
     '''
 
     def __init__(self, tasks=(), *, wait=all):
+        if wait not in (any, all, object):
+            raise ValueError('invalid wait argument')
         self._done = deque()
         self._pending = set()
         self._wait = wait
@@ -160,21 +162,9 @@ class TaskGroup(object):
             raise RuntimeError('no tasks remain')
         return task.result()
 
-    async def join(self, *, wait=all):
-        '''Wait for tasks in the group to terminate.  If there are none,
-        return immediately.
-
-        If wait is all, then wait for all tasks to complete.
-
-        If wait is any then wait for any task to complete and cancel
-        remaining tasks.
-
-        If wait is object, then wait for any task to complete by
-        returning a non-None object.
-
-        While doing the above, if any task raises an exception other
-        than a CancelledError, then all remaining tasks are cancelled
-        and that exception is propogated.
+    async def join(self):
+        '''Wait for tasks in the group to terminate according to the wait
+        policy for the group.
 
         If the join() operation itself is cancelled, all remaining
         tasks in the group are also cancelled.
@@ -188,18 +178,15 @@ class TaskGroup(object):
         def errored(task):
             return not task.cancelled() and task.exception()
 
-        if wait not in (any, all, object):
-            raise ValueError('invalid wait argument')
-
         try:
-            if wait in (all, object):
+            if self._wait in (all, object):
                 while True:
                     task = await self.next_done()
                     if task is None:
                         return
                     if errored(task):
                         break
-                    if wait is object:
+                    if self._wait is object:
                         if task.cancelled() or task.result() is not None:
                             return
             else:  # any
@@ -239,7 +226,7 @@ class TaskGroup(object):
         if exc_type:
             await self.cancel_remaining()
         else:
-            await self.join(wait=self._wait)
+            await self.join()
 
 
 class TaskTimeout(CancelledError):

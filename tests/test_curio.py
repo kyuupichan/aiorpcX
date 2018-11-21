@@ -139,15 +139,6 @@ async def test_tg_cm_no_arg():
 
 
 @pytest.mark.asyncio
-async def test_tg_join_all():
-    tasks = [await spawn(sleep, x/200) for x in range(5, 0, -1)]
-    t = TaskGroup(tasks)
-    await t.join(wait=all)
-    assert all(task.done() for task in tasks)
-    assert not any(task.cancelled() for task in tasks)
-
-
-@pytest.mark.asyncio
 async def test_tg_cm_all():
     tasks = [await spawn(sleep, x/200) for x in range(5, 0, -1)]
     async with TaskGroup(tasks, wait=all) as t:
@@ -155,16 +146,6 @@ async def test_tg_cm_all():
     assert all(task.done() for task in tasks)
     assert not any(task.cancelled() for task in tasks)
     assert t.completed is tasks[-1]
-
-
-@pytest.mark.asyncio
-async def test_tg_join_any():
-    tasks = [await spawn(sleep, 0.001 + x) for x in range(0, 5)]
-    t = TaskGroup(tasks)
-    await t.join(wait=any)
-    assert all(task.done() for task in tasks)
-    assert all(task.cancelled() for task in tasks[1:])
-    assert not tasks[0].cancelled()
 
 
 @pytest.mark.asyncio
@@ -182,23 +163,21 @@ async def test_tg_cm_any():
 async def test_tg_join_object():
     tasks = [await spawn(return_value(None, 0.01)),
              await spawn(return_value(3, 0.02))]
-    t = TaskGroup(tasks)
-    await t.join(wait=object)
+    t = TaskGroup(tasks, wait=object)
+    await t.join()
     assert tasks[0].result() == None
     assert tasks[1].result() == 3
-    # !! Note this is different to the context manager case
-    assert t.completed is tasks[0]
+    assert t.completed is tasks[1]
 
     tasks = [await spawn(return_value(None, 0.01)),
              await spawn(return_value(4, 0.02)),
              await spawn(return_value(2, 0.03))]
-    t = TaskGroup(tasks)
-    await t.join(wait=object)
+    t = TaskGroup(tasks, wait=object)
+    await t.join()
     assert tasks[0].result() == None
     assert tasks[1].result() == 4
     assert tasks[2].cancelled()
-    # !! Note this is different to the context manager case
-    assert t.completed is tasks[0]
+    assert t.completed is tasks[1]
 
 
 @pytest.mark.asyncio
@@ -226,10 +205,10 @@ async def test_tg_cm_object():
 async def test_tg_join_errored():
     for wait in (all, any, object):
         tasks = [await spawn(sleep, x/200) for x in range(5, 0, -1)]
-        t = TaskGroup(tasks)
+        t = TaskGroup(tasks, wait=wait)
         bad_task = await t.spawn(raises(ValueError))
         with pytest.raises(ValueError):
-            await t.join(wait=wait)
+            await t.join()
         assert all(task.cancelled() for task in tasks)
         assert bad_task.done() and not bad_task.cancelled()
         assert t.completed is None
@@ -251,12 +230,12 @@ async def test_tg_cm_errored():
 async def test_tg_join_errored_past():
     for wait in (all, any, object):
         tasks = [await spawn(raises, ValueError) for n in range(3)]
-        t = TaskGroup(tasks)
+        t = TaskGroup(tasks, wait=wait)
         tasks[1].cancel()
         await sleep(0.001)
         good_task = await t.spawn(return_value(3, 0.001))
         with pytest.raises(ValueError):
-            await t.join(wait=wait)
+            await t.join()
         assert good_task.cancelled()
         assert t.completed is None
 
@@ -319,11 +298,10 @@ async def test_tg_closed():
 
 
 @pytest.mark.asyncio
-async def test_tg_join_bad():
+async def test_tg_wait_bad():
     tasks = [await spawn(sleep, x/200) for x in range(5, 0, -1)]
-    t = TaskGroup(tasks)
     with pytest.raises(ValueError):
-        await t.join(wait=None)
+        TaskGroup(tasks, wait=None)
     assert not any(task.cancelled() for task in tasks)
 
 
