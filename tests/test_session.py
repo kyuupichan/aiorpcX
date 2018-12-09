@@ -170,7 +170,7 @@ class TestRPCSession:
         async with Connector(RPCSession, 'localhost', server.port) as client:
             server_session = await MyServerSession.current_server()
             with pytest.raises(TaskTimeout):
-                async with timeout_after(0.1):
+                async with timeout_after(0.01):
                     await client.send_request('sleepy')
         # Assert the server doesn't treat cancellation as an error
         assert server_session.errors == 0
@@ -191,6 +191,8 @@ class TestRPCSession:
         async with Connector(RPCSession, 'localhost', server.port) as client:
             server = await MyServerSession.current_server()
             await client.send_notification('notify', ['test'])
+        # Ensure we've given the server loop time to process the message
+        await asyncio.sleep(0.001)
         assert server.notifications == ['test']
 
     @pytest.mark.asyncio
@@ -309,9 +311,11 @@ class TestRPCSession:
     @pytest.mark.asyncio
     async def test_spawn(self, server):
         async with Connector(RPCSession, 'localhost', server.port) as client:
-            task = await client.spawn(sleep(0.001))
+            task = await client.spawn(sleep(0))
             assert task is not None
-        task = await client.spawn(sleep(0.001))
+        # Give the event loop time to close the group
+        await asyncio.sleep(0.001)
+        task = await client.spawn(sleep(0))
         assert task is None
 
     @pytest.mark.asyncio
