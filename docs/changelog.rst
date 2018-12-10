@@ -3,13 +3,21 @@ ChangeLog
 
 .. note:: The aiorpcX API changes regularly and is still unstable
 
+
+Version 0.10.2 (29 Dec 2018)
+----------------------------
+
+* TaskGroup: faster cancellation (SomberNight)
+* as for curio, remove wait argument to TaskGroup.join()
+* setup.py: read the file to extract the version; see `#10`_
+
 Version 0.10.1 (07 Nov 2018)
----------------------------
+----------------------------
 
 * bugfixes for transport closing and session task spawning
 
 Version 0.10.0 (05 Nov 2018)
----------------------------
+----------------------------
 
 * add session.spawn() method
 * make various member variables private
@@ -135,3 +143,4 @@ Version 0.5.6
 .. _#4: https://github.com/kyuupichan/aiorpcX/issues/4
 .. _#5: https://github.com/kyuupichan/aiorpcX/issues/5
 .. _#8: https://github.com/kyuupichan/aiorpcX/issues/8
+.. _#10: https://github.com/kyuupichan/aiorpcX/issues/10
