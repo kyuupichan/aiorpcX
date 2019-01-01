@@ -33,7 +33,18 @@ import logging
 import time
 from contextlib import suppress
 
-from aiorpcx import *
+from aiorpcx.curio import (
+    Event, TaskGroup, TaskTimeout, CancelledError,
+    timeout_after, spawn_sync, ignore_after
+)
+from aiorpcx.framing import (
+    NewlineFramer, BitcoinFramer,
+    BadMagicError, BadChecksumError, OversizedPayloadError
+)
+from aiorpcx.jsonrpc import (
+    Request, Batch, Notification, ProtocolError, RPCError,
+    JSONRPC, JSONRPCv2, JSONRPCConnection
+)
 from aiorpcx.util import Concurrency
 
 
@@ -55,7 +66,7 @@ class Connector(object):
             self.session_factory, self.host, self.port, **self.kwargs)
 
     async def __aenter__(self):
-        transport, self.protocol = await self.create_connection()
+        _transport, self.protocol = await self.create_connection()
         # By default, do not limit outgoing connections
         self.protocol.bw_limit = 0
         return self.protocol
@@ -135,6 +146,9 @@ class SessionBase(asyncio.Protocol):
     def _using_bandwidth(self, size):
         '''Called when sending or receiving size bytes.'''
         self.bw_charge += size
+
+    def _receive_messages(self):
+        raise NotImplementedError
 
     async def _process_messages(self):
         '''Process incoming messages asynchronously and consume the
@@ -343,7 +357,6 @@ class MessageSession(SessionBase):
 
     async def handle_message(self, message):
         '''message is a (command, payload) pair.'''
-        pass
 
     async def send_message(self, message):
         '''Send a message (command, payload) over the network.'''
@@ -353,6 +366,7 @@ class MessageSession(SessionBase):
 class BatchError(Exception):
 
     def __init__(self, request):
+        super().__init__(request)
         self.request = request   # BatchRequest object
 
 

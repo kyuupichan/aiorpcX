@@ -204,7 +204,7 @@ class SOCKS5(SOCKSBase):
                 raise SOCKSProtocolError(f'password has invalid length '
                                          f'{len(pwd_bytes)}')
             return b''.join([bytes([1, len(user_bytes)]), user_bytes,
-                            bytes([len(pwd_bytes)]), pwd_bytes]), [0, 2]
+                             bytes([len(pwd_bytes)]), pwd_bytes]), [0, 2]
         return b'', [0]
 
     def _start(self):
@@ -330,7 +330,7 @@ class SOCKSProxy(object):
 
         Return an (open_socket, address) pair on success.
         '''
-        assert len(addresses) > 0
+        assert addresses
 
         exceptions = []
         for address in addresses:

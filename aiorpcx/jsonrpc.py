@@ -35,8 +35,7 @@ import json
 from functools import partial
 from numbers import Number
 
-import attr
-from aiorpcx import Queue, Event, CancelledError
+from aiorpcx import Event, CancelledError
 from aiorpcx.util import signature_info
 
 
@@ -62,7 +61,7 @@ class SingleRequest(object):
 
 
 class Request(SingleRequest):
-    def send_result(self, response):
+    def send_result(self, _response):
         return None
 
 
@@ -105,9 +104,7 @@ class Response(object):
 
 
 class CodeMessageError(Exception):
-
-    def __init__(self, code, message):
-        super().__init__(code, message)
+    '''Invoke as CodeMessageError(code, message)'''
 
     @property
     def code(self):
@@ -184,7 +181,6 @@ class JSONRPC(object):
     def _validate_message(cls, message):
         '''Validate other parts of the message other than those
         done in _message_id.'''
-        pass
 
     @classmethod
     def _request_args(cls, request):
@@ -612,7 +608,7 @@ class JSONRPCConnection(object):
             else:
                 message = f'response to unsent request (ID: {request_id})'
             raise ProtocolError.invalid_request(message) from None
-        request, event = self._requests.pop(request_id)
+        _request, event = self._requests.pop(request_id)
         event.result = result
         event.set()
         return []
@@ -664,7 +660,7 @@ class JSONRPCConnection(object):
         ordered_ids, ordered_results = zip(*ordered)
         if ordered_ids not in self._requests:
             raise ProtocolError.invalid_request('response to unsent batch')
-        request_batch, event = self._requests.pop(ordered_ids)
+        _request_batch, event = self._requests.pop(ordered_ids)
         event.result = ordered_results
         event.set()
         return []
@@ -745,7 +741,7 @@ class JSONRPCConnection(object):
     def cancel_pending_requests(self):
         '''Cancel all pending requests.'''
         exception = CancelledError()
-        for request, event in self._requests.values():
+        for _request, event in self._requests.values():
             event.result = exception
             event.set()
         self._requests.clear()
