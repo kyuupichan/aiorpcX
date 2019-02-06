@@ -90,7 +90,7 @@ class NewlineFramer(FramerBase):
                 parts.append(part)
                 buffer_size += len(part)
                 # Ignore over-sized messages; re-synchronize
-                if buffer_size <= self.max_size:
+                if buffer_size <= self.max_size or self.max_size == 0:
                     continue
                 self.synchronizing = True
                 raise MemoryError(f'dropping message over {self.max_size:,d} '
