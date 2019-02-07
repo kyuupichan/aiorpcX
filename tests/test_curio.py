@@ -10,6 +10,10 @@ def sum_all(*values):
     return sum(values)
 
 
+async def my_raises(exc):
+    raise exc
+
+
 async def return_value(x, secs=0):
     if secs:
         await sleep(secs)
@@ -206,8 +210,8 @@ async def test_tg_join_errored():
     for wait in (all, any, object):
         tasks = [await spawn(sleep, x/200) for x in range(5, 0, -1)]
         t = TaskGroup(tasks, wait=wait)
-        bad_task = await t.spawn(my_raises(ValueError))
-        with pytest.raises(ValueError):
+        bad_task = await t.spawn(my_raises(ArithmeticError))
+        with pytest.raises(ArithmeticError):
             await t.join()
         assert all(task.cancelled() for task in tasks)
         assert bad_task.done() and not bad_task.cancelled()
@@ -218,9 +222,9 @@ async def test_tg_join_errored():
 async def test_tg_cm_errored():
     for wait in (all, any, object):
         tasks = [await spawn(sleep, x/200) for x in range(5, 0, -1)]
-        with pytest.raises(ValueError):
+        with pytest.raises(EOFError):
             async with TaskGroup(tasks, wait=wait) as t:
-                bad_task = await t.spawn(my_raises(ValueError))
+                bad_task = await t.spawn(my_raises(EOFError))
         assert all(task.cancelled() for task in tasks)
         assert bad_task.done() and not bad_task.cancelled()
         assert t.completed is None
@@ -229,12 +233,12 @@ async def test_tg_cm_errored():
 @pytest.mark.asyncio
 async def test_tg_join_errored_past():
     for wait in (all, any, object):
-        tasks = [await spawn(my_raises, ValueError) for n in range(3)]
+        tasks = [await spawn(my_raises, AttributeError) for n in range(3)]
         t = TaskGroup(tasks, wait=wait)
         tasks[1].cancel()
         await sleep(0.001)
         good_task = await t.spawn(return_value(3, 0.001))
-        with pytest.raises(ValueError):
+        with pytest.raises(AttributeError):
             await t.join()
         assert good_task.cancelled()
         assert t.completed is None
@@ -243,8 +247,8 @@ async def test_tg_join_errored_past():
 @pytest.mark.asyncio
 async def test_cm_join_errored_past():
     for wait in (all, any, object):
-        tasks = [await spawn(my_raises, ValueError) for n in range(3)]
-        with pytest.raises(ValueError):
+        tasks = [await spawn(my_raises, BufferError) for n in range(3)]
+        with pytest.raises(BufferError):
             async with TaskGroup(tasks, wait=wait) as t:
                 tasks[1].cancel()
                 await sleep(0.001)
@@ -265,23 +269,25 @@ async def test_cm_raises():
 @pytest.mark.asyncio
 async def test_cm_add_later():
     tasks = [await spawn(sleep, 0) for n in range(3)]
-    with pytest.raises(ValueError):
+    with pytest.raises(LookupError):
         async with TaskGroup(tasks) as t:
             await sleep(0.001)
-            task = await t.spawn(my_raises, ValueError)
+            task = await t.spawn(my_raises, LookupError)
     assert all(task.result() is None for task in tasks)
     assert t.completed in tasks
 
 
 @pytest.mark.asyncio
 async def test_tg_multiple_groups():
-    task = await spawn(my_raises, ValueError)
+    task = await spawn(my_raises, FloatingPointError)
     t1 = TaskGroup([task])
     with pytest.raises(RuntimeError):
         TaskGroup([task])
     t3 = TaskGroup()
     with pytest.raises(RuntimeError):
         await t3.add_task(task)
+    with pytest.raises(FloatingPointError):
+        await task
 
 
 @pytest.mark.asyncio
@@ -291,7 +297,7 @@ async def test_tg_closed():
         t = TaskGroup()
         await t.join()
         with pytest.raises(RuntimeError):
-            await t.spawn(my_raises, ValueError)
+            await t.spawn(my_raises, ImportError)
         with pytest.raises(RuntimeError):
             await t.add_task(task)
     await task
@@ -303,6 +309,8 @@ async def test_tg_wait_bad():
     with pytest.raises(ValueError):
         TaskGroup(tasks, wait=None)
     assert not any(task.cancelled() for task in tasks)
+    for task in tasks:
+        await task
 
 
 class MyLogger(object):
@@ -317,18 +325,14 @@ class MyLogger(object):
 async def test_logging(caplog):
     for report_crash in (True, False):
         # spawn
-        task = await spawn(my_raises(ValueError), report_crash=report_crash)
+        task = await spawn(my_raises(TypeError), report_crash=report_crash)
         try:
             await task
             assert False
-        except ValueError:
+        except TypeError:
             pass
 
-    assert any('ValueError' in record.message for record in caplog.records)
-
-
-async def my_raises(exc):
-    raise exc
+    assert any('TypeError' in record.message for record in caplog.records)
 
 
 async def return_after_sleep(x, period=0.01):
@@ -412,10 +416,10 @@ async def test_nested_after_no_expire_nested2():
 
 
 @pytest.mark.asyncio
-async def test_timeout_after_raises_ValueError():
+async def test_timeout_after_raises_IndexError():
     try:
-        await timeout_after(0.001, my_raises, ValueError)
-    except ValueError:
+        await timeout_after(0.01, my_raises, IndexError)
+    except IndexError:
         return
     assert False
 
@@ -768,10 +772,10 @@ async def test_ignore_after_no_expire_nested2():
 
 
 @pytest.mark.asyncio
-async def test_ignore_after_raises_ValueError():
+async def test_ignore_after_raises_KeyError():
     try:
-        await ignore_after(0.001, my_raises, ValueError)
-    except ValueError:
+        await ignore_after(0.01, my_raises, KeyError)
+    except KeyError:
         return
     assert False
 
@@ -779,7 +783,7 @@ async def test_ignore_after_raises_ValueError():
 @pytest.mark.asyncio
 async def test_ignore_after_raises_CancelledError():
     try:
-        await ignore_after(0.001, my_raises, CancelledError)
+        await ignore_after(0.01, my_raises, CancelledError)
     except CancelledError:
         return
     assert False
@@ -1227,13 +1231,13 @@ async def test_task_group_multierror():
         try:
             async with TaskGroup() as g:
                 t1 = await g.spawn(child, RuntimeError)
-                t2 = await g.spawn(child, ValueError)
+                t2 = await g.spawn(child, MemoryError)
                 t3 = await g.spawn(child, None)
                 await sleep(0)
                 evt.set()
-        except (RuntimeError, ValueError) as e:
+        except (RuntimeError, MemoryError) as e:
             assert isinstance(t1.exception(), RuntimeError)
-            assert isinstance(t2.exception(), ValueError)
+            assert isinstance(t2.exception(), MemoryError)
         else:
             assert False
 

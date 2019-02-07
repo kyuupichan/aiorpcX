@@ -95,7 +95,7 @@ class TaskGroup(object):
 
     completed attribute: the first task that completed with a result
     in the group.  Takes into account the wait option used in the
-    TaskGroup constructor (but not in the join method)`.
+    TaskGroup constructor.
     '''
 
     def __init__(self, tasks=(), *, wait=all):

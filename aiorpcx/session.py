@@ -158,17 +158,18 @@ class SessionBase(asyncio.Protocol):
 
         async def collect_tasks():
             next_done = task_group.next_done
-            while True:
-                await next_done()
+            while await next_done():
+                pass
 
         async def cancel_on_close():
             await self.closed_event.wait()
             await task_group.cancel_remaining()
 
-        await spawn(cancel_on_close)
+        cancel_task = await spawn(cancel_on_close)
         async with task_group:
             await self.spawn(self._receive_messages)
             await self.spawn(collect_tasks)
+        await cancel_task
 
     async def _limited_wait(self, secs):
         # Wait at most secs seconds to send, otherwise abort the connection
