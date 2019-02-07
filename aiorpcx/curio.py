@@ -36,14 +36,14 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
 from asyncio import (
-    CancelledError, get_event_loop, Queue, Event, Lock, Semaphore,
-    sleep, Task
+    CancelledError, get_event_loop, Queue, Event, Lock, Semaphore, sleep
 )
 from collections import deque
 from contextlib import suppress
 from functools import partial
+import logging
+import sys
 
 from aiorpcx.util import normalize_corofunc, check_task
 
@@ -54,6 +54,13 @@ __all__ = (
     'TaskTimeout', 'TimeoutCancellationError', 'UncaughtTimeoutError',
     'timeout_after', 'timeout_at', 'ignore_after', 'ignore_at',
 )
+
+
+if sys.version_info >= (3, 7):
+    from asyncio import current_task
+else:
+    from asyncio import Task
+    current_task = Task.current_task
 
 
 async def run_in_thread(func, *args):
@@ -289,7 +296,7 @@ class TimeoutAfter(object):
         self.expired = False
 
     async def __aenter__(self):
-        task = Task.current_task()
+        task = current_task()
         loop_time = task._loop.time()
         if self._absolute:
             self._secs = self._deadline - loop_time

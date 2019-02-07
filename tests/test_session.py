@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import sys
 import time
 from contextlib import suppress
 from functools import partial
@@ -9,6 +10,13 @@ import pytest
 
 from aiorpcx import *
 from util import RaiseTest
+
+
+if sys.version_info >= (3, 7):
+    from asyncio import all_tasks
+else:
+    from asyncio import Task
+    all_tasks = Task.all_tasks
 
 
 def raises_method_not_found(message):
@@ -246,19 +254,19 @@ class TestRPCSession:
     @pytest.mark.asyncio
     async def test_resource_release(self, server):
         loop = asyncio.get_event_loop()
-        tasks = asyncio.Task.all_tasks(loop)
+        tasks = all_tasks(loop)
         try:
             client = Connector(RPCSession, 'localhost', 0)
             await client.create_connection()
         except OSError:
             pass
-        assert asyncio.Task.all_tasks(loop) == tasks
+        assert all_tasks(loop) == tasks
 
         async with Connector(RPCSession, 'localhost', server.port):
             pass
 
         await asyncio.sleep(0.001)  # Yield to event loop
-        assert asyncio.Task.all_tasks(loop) == tasks
+        assert all_tasks(loop) == tasks
 
     @pytest.mark.asyncio
     async def test_pausing(self, server):
@@ -315,7 +323,7 @@ class TestRPCSession:
             assert task is not None
         # Give the event loop time to close the group
         await asyncio.sleep(0.001)
-        task = await client.spawn(sleep(0))
+        task = await client.spawn(sleep, 0)
         assert task is None
 
     @pytest.mark.asyncio
