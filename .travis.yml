@@ -17,6 +17,6 @@ install:
 # command to run tests
 script:
   - pytest --cov=aiorpcx
-  - pycodestyle aiorpcx/*.py
+  - pycodestyle --max-line-length=100 aiorpcx/*.py
   - sh -c "cd docs && make html"
 after_success: coveralls

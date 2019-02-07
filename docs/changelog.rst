@@ -4,6 +4,12 @@ ChangeLog
 .. note:: The aiorpcX API changes regularly and is still unstable
 
 
+Version 0.10.3 (07 Feb 2019)
+----------------------------
+
+* NewlineFramer: max_size of 0 does not limit buffering (SomberNight)
+* trivial code / deprecation warning cleanups
+
 Version 0.10.2 (29 Dec 2018)
 ----------------------------
 
