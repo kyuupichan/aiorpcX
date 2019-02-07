@@ -62,10 +62,10 @@ class NewlineFramer(FramerBase):
     # normal request will be 250 bytes or less, and a reasonable
     # batch may contain 4000 requests.
     def __init__(self, max_size=250 * 4000):
-        '''max_size - an anti-DoS measure.  If, after processing an incoming
-        message, buffered data would exceed max_size bytes, that
-        buffered data is dropped entirely and the framer waits for a
-        newline character to re-synchronize the stream.
+        '''max_size - an anti-DoS measure.  If, after processing an incoming message, buffered
+        data would exceed max_size bytes, that buffered data is dropped entirely and the
+        framer waits for a newline character to re-synchronize the stream.
+        Set to zero to not limit the buffer size.
         '''
         self.max_size = max_size
         self.queue = Queue()
@@ -90,7 +90,7 @@ class NewlineFramer(FramerBase):
                 parts.append(part)
                 buffer_size += len(part)
                 # Ignore over-sized messages; re-synchronize
-                if buffer_size <= self.max_size:
+                if buffer_size <= self.max_size or self.max_size == 0:
                     continue
                 self.synchronizing = True
                 raise MemoryError(f'dropping message over {self.max_size:,d} '

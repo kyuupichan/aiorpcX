@@ -66,6 +66,14 @@ async def test_NewlineFramer_overflow():
     framer.received_bytes(b'\n')
     assert await framer.receive_message() == b'YZ'
 
+    framer = NewlineFramer(max_size=0)
+    framer.received_bytes(b'abc')
+    async with TaskGroup() as group:
+        task = await group.spawn(framer.receive_message())
+        await sleep(0.001)
+        framer.received_bytes(b'\n')
+    assert task.result() == b'abc'
+
 
 @pytest.mark.asyncio
 async def test_ByteQueue():
