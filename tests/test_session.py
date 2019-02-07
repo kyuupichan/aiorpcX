@@ -587,7 +587,11 @@ async def test_base_class_implementation():
     await session.handle_request(Request('', []))
     from aiorpcx.session import SessionBase
     with pytest.raises(NotImplementedError):
+        # default_framer
         SessionBase()
+    session = SessionBase(framer=NewlineFramer())
+    with pytest.raises(NotImplementedError):
+        session._receive_messages()
 
 
 def test_default_and_passed_connection():
