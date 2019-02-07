@@ -212,6 +212,8 @@ class TaskGroup(object):
         task_list = list(self._pending)
         for task in task_list:
             task.cancel()
+        # Give event loop chance to process cancellations
+        await sleep(0)
         for task in task_list:
             with suppress(CancelledError):
                 await task

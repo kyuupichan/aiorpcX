@@ -206,7 +206,7 @@ async def test_tg_join_errored():
     for wait in (all, any, object):
         tasks = [await spawn(sleep, x/200) for x in range(5, 0, -1)]
         t = TaskGroup(tasks, wait=wait)
-        bad_task = await t.spawn(raises(ValueError))
+        bad_task = await t.spawn(my_raises(ValueError))
         with pytest.raises(ValueError):
             await t.join()
         assert all(task.cancelled() for task in tasks)
@@ -220,7 +220,7 @@ async def test_tg_cm_errored():
         tasks = [await spawn(sleep, x/200) for x in range(5, 0, -1)]
         with pytest.raises(ValueError):
             async with TaskGroup(tasks, wait=wait) as t:
-                bad_task = await t.spawn(raises(ValueError))
+                bad_task = await t.spawn(my_raises(ValueError))
         assert all(task.cancelled() for task in tasks)
         assert bad_task.done() and not bad_task.cancelled()
         assert t.completed is None
@@ -229,7 +229,7 @@ async def test_tg_cm_errored():
 @pytest.mark.asyncio
 async def test_tg_join_errored_past():
     for wait in (all, any, object):
-        tasks = [await spawn(raises, ValueError) for n in range(3)]
+        tasks = [await spawn(my_raises, ValueError) for n in range(3)]
         t = TaskGroup(tasks, wait=wait)
         tasks[1].cancel()
         await sleep(0.001)
@@ -243,7 +243,7 @@ async def test_tg_join_errored_past():
 @pytest.mark.asyncio
 async def test_cm_join_errored_past():
     for wait in (all, any, object):
-        tasks = [await spawn(raises, ValueError) for n in range(3)]
+        tasks = [await spawn(my_raises, ValueError) for n in range(3)]
         with pytest.raises(ValueError):
             async with TaskGroup(tasks, wait=wait) as t:
                 tasks[1].cancel()
@@ -268,14 +268,14 @@ async def test_cm_add_later():
     with pytest.raises(ValueError):
         async with TaskGroup(tasks) as t:
             await sleep(0.001)
-            task = await t.spawn(raises, ValueError)
+            task = await t.spawn(my_raises, ValueError)
     assert all(task.result() is None for task in tasks)
     assert t.completed in tasks
 
 
 @pytest.mark.asyncio
 async def test_tg_multiple_groups():
-    task = await spawn(raises, ValueError)
+    task = await spawn(my_raises, ValueError)
     t1 = TaskGroup([task])
     with pytest.raises(RuntimeError):
         TaskGroup([task])
@@ -291,7 +291,7 @@ async def test_tg_closed():
         t = TaskGroup()
         await t.join()
         with pytest.raises(RuntimeError):
-            await t.spawn(raises, ValueError)
+            await t.spawn(my_raises, ValueError)
         with pytest.raises(RuntimeError):
             await t.add_task(task)
     await task
@@ -317,7 +317,7 @@ class MyLogger(object):
 async def test_logging(caplog):
     for report_crash in (True, False):
         # spawn
-        task = await spawn(raises(ValueError), report_crash=report_crash)
+        task = await spawn(my_raises(ValueError), report_crash=report_crash)
         try:
             await task
             assert False
@@ -327,7 +327,7 @@ async def test_logging(caplog):
     assert any('ValueError' in record.message for record in caplog.records)
 
 
-async def raises(exc):
+async def my_raises(exc):
     raise exc
 
 
@@ -414,7 +414,7 @@ async def test_nested_after_no_expire_nested2():
 @pytest.mark.asyncio
 async def test_timeout_after_raises_ValueError():
     try:
-        await timeout_after(0.001, raises, ValueError)
+        await timeout_after(0.001, my_raises, ValueError)
     except ValueError:
         return
     assert False
@@ -423,7 +423,7 @@ async def test_timeout_after_raises_ValueError():
 @pytest.mark.asyncio
 async def test_timeout_after_raises_CancelledError():
     try:
-        await timeout_after(0.01, raises, CancelledError)
+        await timeout_after(0.01, my_raises, CancelledError)
     except CancelledError:
         return
     assert False
@@ -770,7 +770,7 @@ async def test_ignore_after_no_expire_nested2():
 @pytest.mark.asyncio
 async def test_ignore_after_raises_ValueError():
     try:
-        await ignore_after(0.001, raises, ValueError)
+        await ignore_after(0.001, my_raises, ValueError)
     except ValueError:
         return
     assert False
@@ -779,7 +779,7 @@ async def test_ignore_after_raises_ValueError():
 @pytest.mark.asyncio
 async def test_ignore_after_raises_CancelledError():
     try:
-        await ignore_after(0.001, raises, CancelledError)
+        await ignore_after(0.001, my_raises, CancelledError)
     except CancelledError:
         return
     assert False

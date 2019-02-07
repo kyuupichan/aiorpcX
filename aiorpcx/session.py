@@ -35,7 +35,7 @@ from contextlib import suppress
 
 from aiorpcx.curio import (
     Event, TaskGroup, TaskTimeout, CancelledError,
-    timeout_after, spawn_sync, ignore_after
+    spawn, timeout_after, spawn_sync, ignore_after
 )
 from aiorpcx.framing import (
     NewlineFramer, BitcoinFramer,
@@ -96,15 +96,15 @@ class SessionBase(asyncio.Protocol):
         self.loop = loop or asyncio.get_event_loop()
         self.logger = logging.getLogger(self.__class__.__name__)
         self.transport = None
+        self.closed_event = self.event()
         # Set when a connection is made
         self._address = None
         self._proxy_address = None
         # For logger.debug messsages
         self.verbosity = 0
         # Cleared when the send socket is full
-        self._can_send = Event()
+        self._can_send = self.event()
         self._can_send.set()
-        self._pm_task = None
         self._task_group = TaskGroup()
         # Force-close a connection if a send doesn't succeed in this time
         self.max_send_delay = 60
@@ -154,12 +154,18 @@ class SessionBase(asyncio.Protocol):
         '''Process incoming messages asynchronously and consume the
         results.
         '''
+        task_group = self._task_group
+
         async def collect_tasks():
             next_done = task_group.next_done
             while True:
                 await next_done()
 
-        task_group = self._task_group
+        async def cancel_on_close():
+            await self.closed_event.wait()
+            await task_group.cancel_remaining()
+
+        await spawn(cancel_on_close)
         async with task_group:
             await self.spawn(self._receive_messages)
             await self.spawn(collect_tasks)
@@ -231,7 +237,7 @@ class SessionBase(asyncio.Protocol):
             self._proxy_address = peer_address
         else:
             self._address = peer_address
-        self._pm_task = spawn_sync(self._process_messages(), loop=self.loop)
+        spawn_sync(self._process_messages(), loop=self.loop)
 
     def connection_lost(self, exc):
         '''Called by asyncio when the connection closes.
@@ -239,7 +245,7 @@ class SessionBase(asyncio.Protocol):
         Tear down things done in connection_made.'''
         self._address = None
         self.transport = None
-        self._pm_task.cancel()
+        self.closed_event.set()
         # Release waiting tasks
         self._can_send.set()
 
@@ -281,6 +287,9 @@ class SessionBase(asyncio.Protocol):
         '''Return True if the connection is closing.'''
         return not self.transport or self.transport.is_closing()
 
+    def event(self):
+        return Event(loop=self.loop)
+
     def abort(self):
         '''Forcefully close the connection.'''
         if self.transport:
@@ -289,12 +298,10 @@ class SessionBase(asyncio.Protocol):
     async def close(self, *, force_after=30):
         '''Close the connection and return when closed.'''
         self._close()
-        if self._pm_task:
-            with suppress(CancelledError):
-                async with ignore_after(force_after):
-                    await self._pm_task
-                self.abort()
-                await self._pm_task
+        async with ignore_after(force_after):
+            await self.closed_event.wait()
+        self.abort()
+        await self.closed_event.wait()
 
 
 class MessageSession(SessionBase):

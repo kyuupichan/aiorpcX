@@ -142,6 +142,7 @@ class TestRPCSession:
     async def test_send_request(self, server):
         async with Connector(RPCSession, 'localhost', server.port) as client:
             assert await client.send_request('echo', [23]) == 23
+        assert client.closed_event.is_set()
 
     @pytest.mark.asyncio
     async def test_send_request_buggy_handler(self, server):
@@ -206,7 +207,9 @@ class TestRPCSession:
     @pytest.mark.asyncio
     async def test_force_close(self, server):
         async with Connector(RPCSession, 'localhost', server.port) as client:
+            assert not client.closed_event.is_set()
             await client.close(force_after=0.001)
+        assert client.closed_event.is_set()
         assert not client.transport
 
     @pytest.mark.asyncio
@@ -265,7 +268,7 @@ class TestRPCSession:
         async with Connector(RPCSession, 'localhost', server.port):
             pass
 
-        await asyncio.sleep(0.001)  # Yield to event loop
+        await asyncio.sleep(0.005)  # Let things be processed
         assert all_tasks(loop) == tasks
 
     @pytest.mark.asyncio
@@ -650,6 +653,8 @@ class TestMessageSession(object):
                              msg_server.port) as client:
             server_session = await MessageServer.current_server()
             await client.send_message((b'version', b'abc'))
+            # Give the receiving task time to process before closing the connection
+            await sleep(0.001)
         assert server_session.messages == [(b'version', b'abc')]
 
     @pytest.mark.asyncio
@@ -660,6 +665,8 @@ class TestMessageSession(object):
             server_session = await MessageServer.current_server()
             for n in range(count):
                 await client.send_message((b'version', b'abc'))
+            # Give the receiving task time to process before closing the connection
+            await sleep(0.01)
         assert server_session.messages == [(b'version', b'abc')] * count
 
     @pytest.mark.asyncio
@@ -669,6 +676,8 @@ class TestMessageSession(object):
             await client.send_message((b'syntax', b''))
             await client.send_message((b'protocol', b''))
             await client.send_message((b'cancel', b''))
+            # Give the receiving task time to process before closing the connection
+            await sleep(0.01)
         assert in_caplog(caplog, 'exception handling')
         assert in_caplog(caplog, 'Not allowed')
 
@@ -679,6 +688,8 @@ class TestMessageSession(object):
             msg = bytearray(client.framer.frame((b'version', b'')))
             msg[0] = msg[0] ^ 1
             client.transport.write(msg)
+            # Give the receiving task time to process before closing the connection
+            await sleep(0.001)
         assert in_caplog(caplog, 'bad network magic')
 
     @pytest.mark.asyncio
@@ -688,6 +699,8 @@ class TestMessageSession(object):
             msg = bytearray(client.framer.frame((b'version', b'')))
             msg[-1] = msg[-1] ^ 1
             client.transport.write(msg)
+            # Give the receiving task time to process before closing the connection
+            await sleep(0.001)
         assert in_caplog(caplog, 'checksum mismatch')
 
     @pytest.mark.asyncio
