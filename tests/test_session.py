@@ -709,10 +709,14 @@ class TestMessageSession(object):
                              msg_server.port) as client:
             big = 1024 * 1024
             await client.send_message((b'version', bytes(big)))
+            # Give the receiving task time to process before closing the connection
+            await sleep(0.001)
         assert not in_caplog(caplog, 'oversized payload')
         async with Connector(MessageSession, 'localhost',
                              msg_server.port) as client:
             await client.send_message((b'version', bytes(big + 1)))
+            # Give the receiving task time to process before closing the connection
+            await sleep(0.001)
         assert in_caplog(caplog, 'oversized payload')
 
     @pytest.mark.asyncio
