@@ -4,6 +4,12 @@ ChangeLog
 .. note:: The aiorpcX API changes regularly and is still unstable
 
 
+Version 0.10.4 (07 Feb 2019)
+----------------------------
+
+* SessionBase: add closed_event, tweak closing process
+* testsuite cleanup
+
 Version 0.10.3 (07 Feb 2019)
 ----------------------------
 
