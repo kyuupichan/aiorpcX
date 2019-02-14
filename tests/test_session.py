@@ -419,6 +419,18 @@ class TestRPCSession:
             assert isinstance(batch.results[1], RPCError)
 
     @pytest.mark.asyncio
+    async def test_send_batch_cancelled(self, server):
+        async with Connector(RPCSession, 'localhost', server.port) as client:
+            async def send_batch():
+                async with client.send_batch(raise_errors=True) as batch:
+                    batch.add_request('sleepy')
+
+            task = await spawn(send_batch)
+            await client.close()
+            with pytest.raises(CancelledError):
+                task.result()
+
+    @pytest.mark.asyncio
     async def test_send_batch_bad_request(self, server):
         async with Connector(RPCSession, 'localhost', server.port) as client:
             with RaiseTest(JSONRPC.METHOD_NOT_FOUND, 'string', ProtocolError):

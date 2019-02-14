@@ -436,9 +436,13 @@ class BatchRequest(object):
             message, event = self._session.connection.send_batch(self.batch)
             await self._session._send_message(message)
             await event.wait()
-            self.results = event.result
+            result = event.result
+            # Can happen with cancel_pending_requests
+            if isinstance(result, CancelledError):
+                raise result
+            self.results = result
             if self._raise_errors:
-                if any(isinstance(item, Exception) for item in event.result):
+                if any(isinstance(item, Exception) for item in result):
                     raise BatchError(self)
 
 
