@@ -85,23 +85,24 @@ def signature_info(func):
     return SignatureInfo(min_args, max_args, required_names, other_names)
 
 
+def _require_non_negative(value):
+    if not isinstance(value, int) or value < 0:
+        raise RuntimeError('concurrency must be a natural number')
+
+
 class Concurrency(object):
 
     def __init__(self, max_concurrent):
-        self._require_non_negative(max_concurrent)
+        _require_non_negative(max_concurrent)
         self._max_concurrent = max_concurrent
         self.semaphore = asyncio.Semaphore(max_concurrent)
-
-    def _require_non_negative(self, value):
-        if not isinstance(value, int) or value < 0:
-            raise RuntimeError('concurrency must be a natural number')
 
     @property
     def max_concurrent(self):
         return self._max_concurrent
 
     async def set_max_concurrent(self, value):
-        self._require_non_negative(value)
+        _require_non_negative(value)
         diff = value - self._max_concurrent
         self._max_concurrent = value
         if diff >= 0:

@@ -4,6 +4,12 @@ ChangeLog
 .. note:: The aiorpcX API changes regularly and is still unstable
 
 
+Version 0.10.5 (16 Feb 2019)
+----------------------------
+
+* export 'normalize_corofunc'
+* batches: fix handling of session loss; add test
+
 Version 0.10.4 (07 Feb 2019)
 ----------------------------
 

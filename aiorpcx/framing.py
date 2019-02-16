@@ -31,7 +31,7 @@ __all__ = ('FramerBase', 'NewlineFramer', 'BinaryFramer', 'BitcoinFramer',
 from hashlib import sha256 as _sha256
 from struct import Struct
 
-from aiorpcx import Queue
+from .curio import Queue
 
 
 class FramerBase(object):

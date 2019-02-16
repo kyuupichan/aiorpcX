@@ -31,7 +31,6 @@ __all__ = ('Connector', 'RPCSession', 'MessageSession', 'Server',
 import asyncio
 import logging
 import time
-from contextlib import suppress
 
 from aiorpcx.curio import (
     Event, TaskGroup, TaskTimeout, CancelledError,
