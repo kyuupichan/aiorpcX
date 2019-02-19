@@ -314,7 +314,7 @@ class TestRPCSession:
             assert not client._can_send.is_set()
             tasks = [await spawn(client._send_message(b'a'))
                      for n in range(3)]
-            await sleep(client.max_send_delay * 2)
+            await sleep(client.max_send_delay * 10)
             assert all(task.cancelled() for task in tasks)
             assert client._can_send.is_set()
             assert client.is_closing()
