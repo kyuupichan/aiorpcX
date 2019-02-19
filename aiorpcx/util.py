@@ -33,7 +33,7 @@ import inspect
 
 
 def normalize_corofunc(corofunc, args):
-    if asyncio.iscoroutine(corofunc):
+    if inspect.iscoroutine(corofunc):
         if args != ():
             raise ValueError('args cannot be passed with a coroutine')
         return corofunc
