@@ -25,11 +25,20 @@
 
 '''Asyncio wrapper.'''
 
-from asyncio import Queue, Event, Lock, Semaphore, sleep, get_event_loop
 from functools import partial
+import sys
+
+from asyncio import Queue, Event, Lock, Semaphore, CancelledError, sleep, get_event_loop
+if sys.version_info >= (3, 7):
+    from asyncio import current_task
+else:
+    from asyncio import Task
+    current_task = Task.current_task
+
 
 __all__ = (
-    'Queue', 'Event', 'Lock', 'Semaphore', 'sleep', 'Socket'
+    'Queue', 'Event', 'Lock', 'Semaphore', 'sleep', 'Socket', 'CancelledError',
+    'current_task'
 )
 
 

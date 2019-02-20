@@ -3,6 +3,7 @@ import time
 
 import pytest
 
+from aiorpcx import sleep, Event, CancelledError
 from aiorpcx.curio import *
 
 
@@ -18,15 +19,6 @@ async def return_value(x, secs=0):
     if secs:
         await sleep(secs)
     return x
-
-
-# Test exports
-sleep
-CancelledError
-Event
-Lock
-Queue
-Semaphore
 
 
 @pytest.mark.asyncio

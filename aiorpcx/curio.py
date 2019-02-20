@@ -36,31 +36,23 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from asyncio import (
-    CancelledError, get_event_loop, Queue, Event, Lock, Semaphore, sleep
-)
 from collections import deque
 from contextlib import suppress
 from functools import partial
 import logging
 import sys
 
+from aiorpcx.asyncio import (
+    CancelledError, get_event_loop, Queue, Event, Lock, Semaphore, sleep, current_task
+)
 from aiorpcx.util import normalize_corofunc, check_task
 
 
 __all__ = (
-    'Queue', 'Event', 'Lock', 'Semaphore', 'sleep', 'CancelledError',
     'run_in_thread', 'spawn', 'spawn_sync', 'TaskGroup',
     'TaskTimeout', 'TimeoutCancellationError', 'UncaughtTimeoutError',
     'timeout_after', 'timeout_at', 'ignore_after', 'ignore_at',
 )
-
-
-if sys.version_info >= (3, 7):
-    from asyncio import current_task
-else:
-    from asyncio import Task
-    current_task = Task.current_task
 
 
 async def run_in_thread(func, *args):
