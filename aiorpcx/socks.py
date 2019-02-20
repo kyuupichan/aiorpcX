@@ -25,12 +25,12 @@
 
 '''SOCKS proxying.'''
 
-import asyncio
 import collections
 import ipaddress
-import socket
 import struct
 from functools import partial
+
+from aiorpcx.socket import getaddrinfo, SOCK_STREAM, socket as wrapped_socket
 
 
 __all__ = ('SOCKSUserAuth', 'SOCKS4', 'SOCKS4a', 'SOCKS5', 'SOCKSProxy',
@@ -285,7 +285,7 @@ class SOCKSProxy(object):
         auth = 'username' if self.auth else 'none'
         return f'{self.protocol.name()} proxy at {self.address}, auth: {auth}'
 
-    async def _handshake(self, client, sock, loop):
+    async def _handshake(self, client, socket):
         while True:
             count = 0
             try:
@@ -295,50 +295,43 @@ class SOCKSProxy(object):
             else:
                 if message is None:
                     return
-                await loop.sock_sendall(sock, message)
+                await socket.sendall(message)
 
             if count:
-                data = await loop.sock_recv(sock, count)
+                data = await socket.recv(count)
                 if not data:
                     raise SOCKSProtocolError("EOF received")
                 client.receive_data(data)
 
     async def _connect_one(self, host, port):
-        '''Connect to the proxy and perform a handshake requesting a
-        connection to (host, port).
+        '''Connect to the proxy and perform a handshake requesting a connection to (host, port).
 
-        Return the open socket on success, or the exception on failure.
+        Return the open socket.
         '''
         client = self.protocol(host, port, self.auth)
-        sock = socket.socket()
-        loop = asyncio.get_event_loop()
-        try:
-            # A non-blocking socket is required by loop socket methods
-            sock.setblocking(False)
-            await loop.sock_connect(sock, self.address)
-            await self._handshake(client, sock, loop)
-            self.peername = sock.getpeername()
-            return sock
-        except Exception as e:
-            # Don't close - see https://github.com/kyuupichan/aiorpcX/issues/8
-            # sock.close()
-            return e
+        socket = wrapped_socket()
+        # Don't close the socket on error - see https://github.com/kyuupichan/aiorpcX/issues/8
+        await socket.connect(self.address)
+        await self._handshake(client, socket)
+        self.peername = socket.getpeername()
+        return socket
 
     async def _connect(self, addresses):
-        '''Connect to the proxy and perform a handshake requesting a
-        connection to each address in addresses.
+        '''For each address in addresses, connect to the proxy serially and perform a handshake
+        requesting a connection to the address.
 
-        Return an (open_socket, address) pair on success.
+        Return an (open_socket, address) pair on the first success.
         '''
         assert addresses
 
         exceptions = []
         for address in addresses:
             host, port = address[:2]
-            sock = await self._connect_one(host, port)
-            if isinstance(sock, socket.socket):
-                return sock, address
-            exceptions.append(sock)
+            try:
+                socket = await self._connect_one(host, port)
+                return socket, address
+            except Exception as exc:
+                exceptions.append(exc)
 
         strings = set(f'{exc!r}' for exc in exceptions)
         raise (exceptions[0] if len(strings) == 1 else
@@ -353,14 +346,15 @@ class SOCKSProxy(object):
         else:
             host, port = ipaddress.IPv4Address('8.8.8.8'), 53
 
-        sock = await self._connect_one(host, port)
-        if isinstance(sock, socket.socket):
-            sock.close()
+        try:
+            socket = await self._connect_one(host, port)
+        except Exception as exc:
+            # SOCKSFailure indicates something failed, but that we are
+            # likely talking to a proxy
+            return isinstance(exc, SOCKSFailure)
+        else:
+            await socket.close()
             return True
-
-        # SOCKSFailure indicates something failed, but that we are
-        # likely talking to a proxy
-        return isinstance(sock, SOCKSFailure)
 
     @classmethod
     async def auto_detect_address(cls, address, auth):
@@ -406,32 +400,27 @@ class SOCKSProxy(object):
                                 family=0, proto=0, flags=0):
         '''Set up a connection to (host, port) through the proxy.
 
-        If resolve is True then host is resolved locally with
-        getaddrinfo using family, proto and flags, otherwise the proxy
-        is asked to resolve host.
+        If resolve is True then host is resolved locally with getaddrinfo using family,
+        proto and flags, otherwise the proxy is asked to resolve host.
 
-        The function signature is similar to loop.create_connection()
-        with the same result.  The attribute _address is set on the
-        protocol to the address of the successful remote connection.
-        Additionally raises SOCKSError if something goes wrong with
-        the proxy handshake.
+        The function signature is similar to loop.create_connection() with the same
+        result.  The attribute _address is set on the protocol to the address of the
+        successful remote connection.  Additionally raises SOCKSError if something goes
+        wrong with the proxy handshake.
         '''
-        loop = asyncio.get_event_loop()
         if resolve:
-            infos = await loop.getaddrinfo(host, port, family=family,
-                                           type=socket.SOCK_STREAM,
-                                           proto=proto, flags=flags)
+            infos = await getaddrinfo(host, port, family=family, type=SOCK_STREAM,
+                                      proto=proto, flags=flags)
             addresses = [info[4] for info in infos]
         else:
             addresses = [(host, port)]
 
-        sock, address = await self._connect(addresses)
+        socket, address = await self._connect(addresses)
 
         def set_address():
             protocol = protocol_factory()
             protocol._address = address
             return protocol
 
-        return await loop.create_connection(
-            set_address, sock=sock, ssl=ssl,
-            server_hostname=host if ssl else None)
+        return await socket.create_connection(set_address, ssl=ssl,
+                                              server_hostname=host if ssl else None)

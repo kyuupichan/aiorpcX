@@ -38,12 +38,14 @@ class Socket:
 
     def __init__(self, sockobj, loop=None):
         self._socket = sockobj
-        # A non-blocking socket is required by loop socket methods.  curio does same.
+        # A non-blocking socket is required by loop socket methods.  curio does the same.
         sockobj.setblocking(False)
         if loop is None:
-            loop = asyncio.get_event_loop()
+            loop = get_event_loop()
+        self._loop = loop
         # Bound methods
         self.accept = partial(loop.sock_accept, sockobj)
+        self.connect = partial(loop.sock_connect, sockobj)
         self.recv = partial(loop.sock_recv, sockobj)
         self.recv_into = partial(loop.sock_recv_into, sockobj)
         self.sendall = partial(loop.sock_sendall, sockobj)
@@ -53,3 +55,15 @@ class Socket:
         if self._socket:
             self._socket.close()
         self._socket = None
+
+    async def __aenter__(self):
+        self._socket.__enter__()
+        return self
+
+    async def __aexit__(self, *args):
+        if self._socket:
+            self._socket.__exit__(*args)
+
+    async def create_connection(self, protocol_factory, ssl=None, server_hostname=None):
+        return await self._loop.create_connection(protocol_factory, sock=self._socket, ssl=ssl,
+                                                  server_hostname=server_hostname)
