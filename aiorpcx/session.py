@@ -160,15 +160,9 @@ class SessionBase(asyncio.Protocol):
             while await next_done():
                 pass
 
-        async def cancel_on_close():
-            await self.closed_event.wait()
-            await task_group.cancel_remaining()
-
-        cancel_task = await spawn(cancel_on_close)
         async with task_group:
-            await self.spawn(self._receive_messages)
-            await self.spawn(collect_tasks)
-        await cancel_task
+            await task_group.spawn(self._receive_messages)
+            await task_group.spawn(collect_tasks)
 
     async def _limited_wait(self, secs):
         # Wait at most secs seconds to send, otherwise abort the connection
@@ -246,6 +240,8 @@ class SessionBase(asyncio.Protocol):
         self._address = None
         self.transport = None
         self.closed_event.set()
+        spawn_sync(self._task_group.cancel_remaining(), loop=self.loop)
+
         # Release waiting tasks
         self._can_send.set()
 
