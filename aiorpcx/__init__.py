@@ -1,3 +1,4 @@
+from .compat_asyncio import *
 from .curio import *
 from .framing import *
 from .jsonrpc import *

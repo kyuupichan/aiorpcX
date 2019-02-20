@@ -26,10 +26,11 @@
 __all__ = ('normalize_corofunc', )
 
 
-import asyncio
 from collections import namedtuple
 from functools import partial
 import inspect
+
+from aiorpcx import Semaphore
 
 
 def normalize_corofunc(corofunc, args):
@@ -95,7 +96,7 @@ class Concurrency(object):
     def __init__(self, max_concurrent):
         _require_non_negative(max_concurrent)
         self._max_concurrent = max_concurrent
-        self.semaphore = asyncio.Semaphore(max_concurrent)
+        self.semaphore = Semaphore(max_concurrent)
 
     @property
     def max_concurrent(self):
