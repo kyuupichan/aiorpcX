@@ -63,6 +63,9 @@ class MyServerSession(RPCSession):
     async def on_bug(self):
         raise ValueError
 
+    async def on_incompatibleversion(self):
+        raise FinalRPCError(1, "incompatible version")
+
     async def on_sleepy(self):
         await sleep(10)
 
@@ -365,6 +368,14 @@ class TestRPCSession:
         except CancelledError:
             pass
         assert server_session.errors == server_session.max_errors
+
+    @pytest.mark.asyncio
+    async def test_finalrpcerror(self, server):
+        async with Connector(RPCSession, 'localhost',
+                             server.port) as client:
+            with pytest.raises(RPCError) as e:
+                await client.send_request('incompatibleversion')
+            assert client.is_closing()
 
     @pytest.mark.asyncio
     async def test_send_empty_batch(self, server):

@@ -41,7 +41,7 @@ from aiorpcx.framing import (
     BadMagicError, BadChecksumError, OversizedPayloadError
 )
 from aiorpcx.jsonrpc import (
-    Request, Batch, Notification, ProtocolError, RPCError,
+    Request, Batch, Notification, ProtocolError, RPCError, FinalRPCError,
     JSONRPC, JSONRPCv2, JSONRPCConnection
 )
 from aiorpcx.util import Concurrency
@@ -496,7 +496,10 @@ class RPCSession(SessionBase):
                 message = request.send_result(result)
                 if message:
                     await self._send_message(message)
-            if isinstance(result, Exception):
+            if isinstance(result, FinalRPCError):
+                # Don't await self.close() because that is self-cancelling
+                self._close()
+            elif isinstance(result, Exception):
                 self._bump_errors()
 
     def connection_lost(self, exc):

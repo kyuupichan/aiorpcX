@@ -27,7 +27,7 @@
 
 __all__ = ('JSONRPC', 'JSONRPCv1', 'JSONRPCv2', 'JSONRPCLoose',
            'JSONRPCAutoDetect', 'Request', 'Notification', 'Batch',
-           'RPCError', 'ProtocolError',
+           'RPCError', 'FinalRPCError', 'ProtocolError',
            'JSONRPCConnection', 'handler_invocation')
 
 import itertools
@@ -137,6 +137,10 @@ class CodeMessageError(Exception):
 
 
 class RPCError(CodeMessageError):
+    pass
+
+
+class FinalRPCError(RPCError):
     pass
 
 
