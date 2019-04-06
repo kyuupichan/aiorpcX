@@ -45,7 +45,7 @@ from functools import partial
 import logging
 import sys
 
-from aiorpcx.util import normalize_corofunc, check_task
+from aiorpcx.util import instantiate_coroutine, check_task
 
 
 __all__ = (
@@ -73,7 +73,7 @@ async def spawn(coro, *args, loop=None, report_crash=True):
 
 
 def spawn_sync(coro, *args, loop=None, report_crash=True):
-    coro = normalize_corofunc(coro, args)
+    coro = instantiate_coroutine(coro, args)
     loop = loop or get_event_loop()
     task = loop.create_task(coro)
     if report_crash:
@@ -329,7 +329,7 @@ class TimeoutAfter(object):
 
 
 async def _timeout_after_func(seconds, absolute, coro, args):
-    coro = normalize_corofunc(coro, args)
+    coro = instantiate_coroutine(coro, args)
     async with TimeoutAfter(seconds, absolute=absolute):
         return await coro
 
@@ -379,7 +379,7 @@ def timeout_at(clock, coro=None, *args):
 
 
 async def _ignore_after_func(seconds, absolute, coro, args, timeout_result):
-    coro = normalize_corofunc(coro, args)
+    coro = instantiate_coroutine(coro, args)
     async with TimeoutAfter(seconds, absolute=absolute, ignore=True):
         return await coro
 

@@ -23,7 +23,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-__all__ = ('normalize_corofunc', )
+__all__ = ('instantiate_coroutine', )
 
 
 import asyncio
@@ -32,7 +32,7 @@ from functools import partial
 import inspect
 
 
-def normalize_corofunc(corofunc, args):
+def instantiate_coroutine(corofunc, args):
     if asyncio.iscoroutine(corofunc):
         if args != ():
             raise ValueError('args cannot be passed with a coroutine')
