@@ -365,6 +365,7 @@ class TestRPCSession:
                              server.port) as client:
             with pytest.raises(RPCError) as e:
                 await client.send_request('incompatibleversion')
+            await sleep(0)
             assert client.is_closing()
 
     @pytest.mark.asyncio
