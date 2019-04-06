@@ -4,6 +4,14 @@ ChangeLog
 .. note:: The aiorpcX API changes regularly and is still unstable
 
 
+Version 0.11.0 (06 Apr 2019)
+----------------------------
+
+* rename 'normalize_corofunc' to 'instantiate_coroutine'
+* remove spawn() member of SessionBase
+* add FinalRPCError (ghost43)
+* more reliable cancellation on connection closing
+
 Version 0.10.5 (16 Feb 2019)
 ----------------------------
 
