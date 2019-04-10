@@ -4,6 +4,11 @@ ChangeLog
 .. note:: The aiorpcX API changes regularly and is still unstable
 
 
+Version 0.12.0 (09 Apr 2019)
+----------------------------
+
+* switch from bandwidth to a generic cost metric for sessions
+
 Version 0.11.0 (06 Apr 2019)
 ----------------------------
 
