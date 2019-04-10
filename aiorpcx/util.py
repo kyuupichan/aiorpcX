@@ -85,42 +85,37 @@ def signature_info(func):
     return SignatureInfo(min_args, max_args, required_names, other_names)
 
 
-def _require_non_negative(value):
-    if not isinstance(value, int) or value < 0:
-        raise RuntimeError('concurrency must be a natural number')
+EXCESSIVE_RESOURCE_USAGE = -99
 
 
 class Concurrency(object):
 
-    def __init__(self, max_concurrent):
-        _require_non_negative(max_concurrent)
-        self._max_concurrent = max_concurrent
-        self._semaphore = asyncio.Semaphore(max_concurrent)
-        self._recalc_func = None
+    def __init__(self, target):
+        self._target = int(target)
+        self._semaphore = asyncio.Semaphore(self._target)
+        self._sem_value = self._target
 
-    async def _set_max_concurrent(self, value):
-        _require_non_negative(value)
-        diff = value - self._max_concurrent
-        self._max_concurrent = value
-        if diff >= 0:
-            for _ in range(diff):
-                self._semaphore.release()
-        else:
-            for _ in range(-diff):
+    async def _retarget_semaphore(self):
+        while self._sem_value != self._target:
+            if self._target <= 0:
+                from .jsonrpc import FinalRPCError
+                raise FinalRPCError(EXCESSIVE_RESOURCE_USAGE, 'excessive resource usage')
+            if self._sem_value > self._target:
                 await self._semaphore.acquire()
+                self._sem_value -= 1
+            else:
+                self._semaphore.release()
+                self._sem_value += 1
 
     @property
     def max_concurrent(self):
-        return self._max_concurrent
+        return self._target
 
-    def force_recalc(self, recalc_func):
-        self._recalc_func = recalc_func
+    def set_target(self, target):
+        self._target = int(target)
 
     async def __aenter__(self):
-        if self._recalc_func:
-            target = self._recalc_func()
-            self._recalc_func = None
-            await self._set_max_concurrent(target)
+        await self._retarget_semaphore()
         await self._semaphore.acquire()
 
     async def __aexit__(self, exc_type, exc_value, traceback):

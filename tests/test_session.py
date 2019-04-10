@@ -329,24 +329,29 @@ class TestRPCSession:
             client.cost_decay_per_sec = 0
             # Test usage below soft limit
             client.cost = client.cost_soft_limit - 10
-            assert client._recalc_concurrency() == client.initial_concurrent
+            client.recalc_concurrency()
+            assert client._concurrency.max_concurrent == client.initial_concurrent
             assert client._cost_fraction == 0.0
             # Test usage at soft limit doesn't affect concurrency
             client.cost = client.cost_soft_limit
-            assert client._recalc_concurrency() == client.initial_concurrent
+            client.recalc_concurrency()
+            assert client._concurrency.max_concurrent == client.initial_concurrent
             assert client._cost_fraction == 0.0
             # Test usage half-way
             client.cost = (client.cost_soft_limit + client.cost_hard_limit) // 2
-            assert 1 < client._recalc_concurrency() < client.initial_concurrent
+            client.recalc_concurrency()
+            assert 1 < client._concurrency.max_concurrent < client.initial_concurrent
             assert 0.49 < client._cost_fraction < 0.51
             # Test at hard limit
             client.cost = client.cost_hard_limit
-            assert client._recalc_concurrency() == 0
+            client.recalc_concurrency()
             assert client._cost_fraction == 1.0
             # Test above hard limit disconnects
             client.cost = client.cost_hard_limit + 1
+            client.recalc_concurrency()
             with pytest.raises(FinalRPCError):
-                client._recalc_concurrency()
+                async with client._concurrency:
+                    pass
 
     @pytest.mark.asyncio
     async def test_concurrency_decay(self, server):
@@ -354,7 +359,7 @@ class TestRPCSession:
             client.cost_decay_per_sec = 100
             client.cost = 1000
             await sleep(0.01)
-            client._recalc_concurrency()
+            client.recalc_concurrency()
             assert 995 < client.cost < 999
 
     @pytest.mark.asyncio
@@ -362,17 +367,18 @@ class TestRPCSession:
         async with Connector(RPCSession, 'localhost', server.port) as client:
             client.cost = 1_000_000_000
             client.cost_hard_limit = 0
-            assert client._recalc_concurrency() == client.initial_concurrent
+            client.recalc_concurrency()
+            assert client._concurrency.max_concurrent == client.initial_concurrent
 
     @pytest.mark.asyncio
     async def test_extra_cost(self, server):
         async with Connector(RPCSession, 'localhost', server.port) as client:
             client.extra_cost = lambda: client.cost_soft_limit + 1
-            client._recalc_concurrency()
-            assert client._cost_fraction > 0
+            client.recalc_concurrency()
+            assert 1 > client._cost_fraction > 0
             client.extra_cost = lambda: client.cost_hard_limit + 1
-            with pytest.raises(FinalRPCError):
-                client._recalc_concurrency()
+            client.recalc_concurrency()
+            assert client._cost_fraction > 1
 
     @pytest.mark.asyncio
     async def test_request_sleep(self, server):

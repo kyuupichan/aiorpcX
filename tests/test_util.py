@@ -3,6 +3,7 @@ from functools import partial
 
 import pytest
 
+from aiorpcx import FinalRPCError
 from aiorpcx.util import (SignatureInfo, signature_info, Concurrency,
                           is_async_call)
 
@@ -25,12 +26,10 @@ def test_is_async_call():
 
 def test_concurrency_constructor():
     Concurrency(3)
-    Concurrency(max_concurrent=0)
-    Concurrency(max_concurrent=32)
-    with pytest.raises(RuntimeError):
-        Concurrency(max_concurrent=-1)
-    with pytest.raises(RuntimeError):
-        Concurrency(max_concurrent=2.5)
+    Concurrency(target=6)
+    Concurrency(target=0)
+    with pytest.raises(ValueError):
+        Concurrency(target=-1)
 
 
 async def concurrency_max(c):
@@ -63,34 +62,21 @@ async def concurrency_max(c):
 
 @pytest.mark.asyncio
 async def test_max_concurrent():
-    c = Concurrency(max_concurrent=3)
+    c = Concurrency(target=3)
     assert c.max_concurrent == 3
     assert await concurrency_max(c) == 3
-    await c._set_max_concurrent(3)
+    c.set_target(3)
     assert c.max_concurrent == 3
     assert await concurrency_max(c) == 3
-    await c._set_max_concurrent(1)
+    c.set_target(1)
     assert c.max_concurrent == 1
     assert await concurrency_max(c) == 1
-    await c._set_max_concurrent(0)
-    assert c._semaphore._value == 0
+
+    c.set_target(0)
     assert c.max_concurrent == 0
-    assert await concurrency_max(c) == 0
-    await c._set_max_concurrent(5)
+    with pytest.raises(FinalRPCError):
+        async with c:
+            pass
+    c.set_target(5)
     assert c.max_concurrent == 5
     assert await concurrency_max(c) == 5
-    with pytest.raises(RuntimeError):
-        await c._set_max_concurrent(-1)
-    with pytest.raises(RuntimeError):
-        await c._set_max_concurrent(2.6)
-
-
-@pytest.mark.asyncio
-async def test_force_recalc():
-    c = Concurrency(max_concurrent=6)
-    c.force_recalc(lambda: 4)
-    assert c.max_concurrent == 6
-    async with c:
-        assert c.max_concurrent == 4
-        assert c._recalc_func is None
-    assert c.max_concurrent == 4

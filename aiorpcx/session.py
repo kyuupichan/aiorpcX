@@ -48,9 +48,6 @@ from aiorpcx.jsonrpc import (
 from aiorpcx.util import Concurrency
 
 
-EXCESSIVE_RESOURCE_USAGE = -99
-
-
 class Connector(object):
 
     def __init__(self, session_factory, host=None, port=None, proxy=None,
@@ -141,29 +138,6 @@ class SessionBase(asyncio.Protocol):
         self._concurrency = Concurrency(self.initial_concurrent)
         self._cost_check_delta = max(self.cost_soft_limit // 4, 100)
 
-    def _recalc_concurrency(self):
-        # Refund resource usage proportionally to elapsed time; the bump passed is negative
-        now = time.time()
-        self.bump_cost((self._cost_time - now) * self.cost_decay_per_sec)
-        self._cost_last = self.cost
-
-        # Setting cost_hard_limit <= 0 means to not limit concurrency
-        value = self._concurrency.max_concurrent
-        cost_soft_range = self.cost_hard_limit - self.cost_soft_limit
-        if cost_soft_range <= 0:
-            return value
-
-        cost = self.cost + self.extra_cost()
-        self._cost_time = now
-        self._cost_fraction = max(0.0, (cost - self.cost_soft_limit) / cost_soft_range)
-        if self._cost_fraction > 1.0:
-            raise FinalRPCError(EXCESSIVE_RESOURCE_USAGE, 'excessive resource usage')
-
-        target = ceil((1.0 - self._cost_fraction) * self.initial_concurrent)
-        if target != value:
-            self.logger.info(f'changing task concurrency from {value} to {target}')
-        return target
-
     def _receive_messages(self):
         raise NotImplementedError
 
@@ -253,7 +227,32 @@ class SessionBase(asyncio.Protocol):
         # Delta can be positive or negative
         self.cost = max(0, self.cost + delta)
         if abs(self.cost - self._cost_last) > self._cost_check_delta:
-            self._concurrency.force_recalc(self._recalc_concurrency)
+            self.recalc_concurrency()
+
+    def recalc_concurrency(self):
+        '''Call to recalculate sleeps and concurrency for the session.  Called automatically if
+        cost has drifted significantly.  Otherwise can be called at regular intervals if
+        desired.
+        '''
+        # Refund resource usage proportionally to elapsed time; the bump passed is negative
+        now = time.time()
+        self.cost = max(0, self.cost - (now - self._cost_time) * self.cost_decay_per_sec)
+        self._cost_time = now
+        self._cost_last = self.cost
+
+        # Setting cost_hard_limit <= 0 means to not limit concurrency
+        value = self._concurrency.max_concurrent
+        cost_soft_range = self.cost_hard_limit - self.cost_soft_limit
+        if cost_soft_range <= 0:
+            return
+
+        cost = self.cost + self.extra_cost()
+        self._cost_fraction = max(0.0, (cost - self.cost_soft_limit) / cost_soft_range)
+
+        target = ceil((1.0 - self._cost_fraction) * self.initial_concurrent)
+        if target != value:
+            self.logger.info(f'changing task concurrency from {value} to {target}')
+        self._concurrency.set_target(target)
 
     def extra_cost(self):
         '''A dynamic value added to this session's cost when deciding how much to throttle
