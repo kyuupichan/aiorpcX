@@ -30,11 +30,12 @@ __all__ = ('Connector', 'RPCSession', 'MessageSession', 'Server',
 
 import asyncio
 import logging
+from math import ceil
 import time
 
 from aiorpcx.curio import (
     Event, TaskGroup, TaskTimeout, CancelledError,
-    spawn, timeout_after, spawn_sync, ignore_after
+    spawn, timeout_after, spawn_sync, ignore_after, sleep
 )
 from aiorpcx.framing import (
     NewlineFramer, BitcoinFramer,
@@ -45,6 +46,9 @@ from aiorpcx.jsonrpc import (
     JSONRPC, JSONRPCv2, JSONRPCConnection
 )
 from aiorpcx.util import Concurrency
+
+
+EXCESSIVE_RESOURCE_USAGE = -99
 
 
 class Connector(object):
@@ -67,7 +71,7 @@ class Connector(object):
     async def __aenter__(self):
         _transport, self.protocol = await self.create_connection()
         # By default, do not limit outgoing connections
-        self.protocol.bw_limit = 0
+        self.ru_hard_limit = 0
         return self.protocol
 
     async def __aexit__(self, exc_type, exc_value, traceback):
@@ -89,6 +93,18 @@ class SessionBase(asyncio.Protocol):
     '''
 
     max_errors = 10
+    # Multiply this by bandwidth bytes used to get resource usage cost
+    bw_cost_per_byte = 1 / 100000
+    # If cost is over this requests begin to get delayed and concurrency is reduced
+    cost_soft_limit = 10000
+    # If cost is over this the session is closed
+    cost_hard_limit = 50000
+    # Resource usage is reduced by this every second
+    cost_decay_per_sec = cost_hard_limit / 3600
+    # Request delay ranges from 0 to this between cost_soft_limit and cost_hard_limit
+    cost_sleep = 5.0
+    # Initial number of requests that can be concurrently processed
+    initial_concurrent = 6
 
     def __init__(self, *, framer=None, loop=None):
         self.framer = framer or self.default_framer()
@@ -116,35 +132,37 @@ class SessionBase(asyncio.Protocol):
         self.recv_count = 0
         self.recv_size = 0
         self.last_recv = self.start_time
-        # Bandwidth usage per hour before throttling starts
-        self.bw_limit = 2000000
-        self.bw_time = self.start_time
-        self.bw_charge = 0
+        # Resource usage
+        self.cost = 0.0
+        self._cost_last = 0.0
+        self._cost_time = self.start_time
+        self._cost_fraction = 0.0
         # Concurrency control
-        self.max_concurrent = 6
-        self._concurrency = Concurrency(self.max_concurrent)
+        self._concurrency = Concurrency(self.initial_concurrent)
+        self._cost_check_delta = max(self.cost_soft_limit // 4, 100)
 
-    async def _update_concurrency(self):
-        # A non-positive value means not to limit concurrency
-        if self.bw_limit <= 0:
-            return
+    def _recalc_concurrency(self):
+        # Refund resource usage proportionally to elapsed time; the bump passed is negative
         now = time.time()
-        # Reduce the recorded usage in proportion to the elapsed time
-        refund = (now - self.bw_time) * (self.bw_limit / 3600)
-        self.bw_charge = max(0, self.bw_charge - int(refund))
-        self.bw_time = now
-        # Reduce concurrency allocation by 1 for each whole bw_limit used
-        throttle = int(self.bw_charge / self.bw_limit)
-        target = max(1, self.max_concurrent - throttle)
-        current = self._concurrency.max_concurrent
-        if target != current:
-            self.logger.info(f'changing task concurrency from {current} '
-                             f'to {target}')
-            await self._concurrency.set_max_concurrent(target)
+        self.bump_cost((self._cost_time - now) * self.cost_decay_per_sec)
+        self._cost_last = self.cost
 
-    def _using_bandwidth(self, size):
-        '''Called when sending or receiving size bytes.'''
-        self.bw_charge += size
+        # Setting cost_hard_limit <= 0 means to not limit concurrency
+        value = self._concurrency.max_concurrent
+        cost_soft_range = self.cost_hard_limit - self.cost_soft_limit
+        if cost_soft_range <= 0:
+            return value
+
+        cost = self.cost + self.extra_cost()
+        self._cost_time = now
+        self._cost_fraction = max(0.0, (cost - self.cost_soft_limit) / cost_soft_range)
+        if self._cost_fraction > 1.0:
+            raise FinalRPCError(EXCESSIVE_RESOURCE_USAGE, 'excessive resource usage')
+
+        target = ceil((1.0 - self._cost_fraction) * self.initial_concurrent)
+        if target != value:
+            self.logger.info(f'changing task concurrency from {value} to {target}')
+        return target
 
     def _receive_messages(self):
         raise NotImplementedError
@@ -164,7 +182,7 @@ class SessionBase(asyncio.Protocol):
         if not self.is_closing():
             framed_message = self.framer.frame(message)
             self.send_size += len(framed_message)
-            self._using_bandwidth(len(framed_message))
+            self.bump_cost(len(framed_message) * self.bw_cost_per_byte)
             self.send_count += 1
             self.last_send = time.time()
             if self.verbosity >= 4:
@@ -187,7 +205,7 @@ class SessionBase(asyncio.Protocol):
         if self.verbosity >= 4:
             self.logger.debug(f'Received framed message {framed_message}')
         self.recv_size += len(framed_message)
-        self._using_bandwidth(len(framed_message))
+        self.bump_cost(len(framed_message) * self.bw_cost_per_byte)
         self.framer.received_bytes(framed_message)
 
     def pause_writing(self):
@@ -231,6 +249,18 @@ class SessionBase(asyncio.Protocol):
         self._can_send.set()
 
     # External API
+    def bump_cost(self, delta):
+        # Delta can be positive or negative
+        self.cost = max(0, self.cost + delta)
+        if abs(self.cost - self._cost_last) > self._cost_check_delta:
+            self._concurrency.force_recalc(self._recalc_concurrency)
+
+    def extra_cost(self):
+        '''A dynamic value added to this session's cost when deciding how much to throttle
+        requests.  Can be negative.
+        '''
+        return 0.0
+
     def default_framer(self):
         '''Return a default framer.'''
         raise NotImplementedError
@@ -311,13 +341,13 @@ class MessageSession(SessionBase):
             else:
                 self.last_recv = time.time()
                 self.recv_count += 1
-                if self.recv_count % 10 == 0:
-                    await self._update_concurrency()
                 await self._throttled_message(message)
 
     async def _throttled_message(self, message):
         '''Process a single request, respecting the concurrency limit.'''
-        async with self._concurrency.semaphore:
+        async with self._concurrency:
+            if self._cost_fraction:
+                await sleep(self._cost_fraction * self.cost_sleep)
             try:
                 await self.handle_message(message)
             except ProtocolError as e:
@@ -435,8 +465,6 @@ class RPCSession(SessionBase):
 
             self.last_recv = time.time()
             self.recv_count += 1
-            if self.recv_count % 10 == 0:
-                await self._update_concurrency()
 
             try:
                 requests = self.connection.receive_message(message)
@@ -453,7 +481,9 @@ class RPCSession(SessionBase):
 
     async def _throttled_request(self, request):
         '''Process a single request, respecting the concurrency limit.'''
-        async with self._concurrency.semaphore:
+        async with self._concurrency:
+            if self._cost_fraction:
+                await sleep(self._cost_fraction * self.cost_sleep)
             try:
                 result = await self.handle_request(request)
             except (ProtocolError, RPCError) as e:

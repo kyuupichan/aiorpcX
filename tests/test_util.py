@@ -40,7 +40,7 @@ async def concurrency_max(c):
     fut = loop.create_future()
 
     async def work():
-        async with c.semaphore:
+        async with c:
             q.append(None)
             await fut
 
@@ -66,20 +66,31 @@ async def test_max_concurrent():
     c = Concurrency(max_concurrent=3)
     assert c.max_concurrent == 3
     assert await concurrency_max(c) == 3
-    await c.set_max_concurrent(3)
+    await c._set_max_concurrent(3)
     assert c.max_concurrent == 3
     assert await concurrency_max(c) == 3
-    await c.set_max_concurrent(1)
+    await c._set_max_concurrent(1)
     assert c.max_concurrent == 1
     assert await concurrency_max(c) == 1
-    await c.set_max_concurrent(0)
-    assert c.semaphore._value == 0
+    await c._set_max_concurrent(0)
+    assert c._semaphore._value == 0
     assert c.max_concurrent == 0
     assert await concurrency_max(c) == 0
-    await c.set_max_concurrent(5)
+    await c._set_max_concurrent(5)
     assert c.max_concurrent == 5
     assert await concurrency_max(c) == 5
     with pytest.raises(RuntimeError):
-        await c.set_max_concurrent(-1)
+        await c._set_max_concurrent(-1)
     with pytest.raises(RuntimeError):
-        await c.set_max_concurrent(2.6)
+        await c._set_max_concurrent(2.6)
+
+
+@pytest.mark.asyncio
+async def test_force_recalc():
+    c = Concurrency(max_concurrent=6)
+    c.force_recalc(lambda: 4)
+    assert c.max_concurrent == 6
+    async with c:
+        assert c.max_concurrent == 4
+        assert c._recalc_func is None
+    assert c.max_concurrent == 4

@@ -95,22 +95,36 @@ class Concurrency(object):
     def __init__(self, max_concurrent):
         _require_non_negative(max_concurrent)
         self._max_concurrent = max_concurrent
-        self.semaphore = asyncio.Semaphore(max_concurrent)
+        self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._recalc_func = None
 
-    @property
-    def max_concurrent(self):
-        return self._max_concurrent
-
-    async def set_max_concurrent(self, value):
+    async def _set_max_concurrent(self, value):
         _require_non_negative(value)
         diff = value - self._max_concurrent
         self._max_concurrent = value
         if diff >= 0:
             for _ in range(diff):
-                self.semaphore.release()
+                self._semaphore.release()
         else:
             for _ in range(-diff):
-                await self.semaphore.acquire()
+                await self._semaphore.acquire()
+
+    @property
+    def max_concurrent(self):
+        return self._max_concurrent
+
+    def force_recalc(self, recalc_func):
+        self._recalc_func = recalc_func
+
+    async def __aenter__(self):
+        if self._recalc_func:
+            target = self._recalc_func()
+            self._recalc_func = None
+            await self._set_max_concurrent(target)
+        await self._semaphore.acquire()
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        self._semaphore.release()
 
 
 def check_task(logger, task):

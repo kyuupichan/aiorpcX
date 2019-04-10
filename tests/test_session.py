@@ -325,26 +325,65 @@ class TestRPCSession:
     @pytest.mark.asyncio
     async def test_concurrency(self, server):
         async with Connector(RPCSession, 'localhost', server.port) as client:
-            client.bw_limit = 1_000_000
-            # Test high bw usage crushes concurrency to 1
-            client.bw_charge = 1_000_000_000
-            prior_mc = client._concurrency.max_concurrent
-            await client._update_concurrency()
-            assert 1 == client._concurrency.max_concurrent < prior_mc
-            # Test passage of time restores it
-            client.bw_time -= 1000 * 1000 * 1000
-            await client._update_concurrency()
-            assert client._concurrency.max_concurrent == prior_mc
+            # Prevent this interfering
+            client.cost_decay_per_sec = 0
+            # Test usage below soft limit
+            client.cost = client.cost_soft_limit - 10
+            assert client._recalc_concurrency() == client.initial_concurrent
+            assert client._cost_fraction == 0.0
+            # Test usage at soft limit doesn't affect concurrency
+            client.cost = client.cost_soft_limit
+            assert client._recalc_concurrency() == client.initial_concurrent
+            assert client._cost_fraction == 0.0
+            # Test usage half-way
+            client.cost = (client.cost_soft_limit + client.cost_hard_limit) // 2
+            assert 1 < client._recalc_concurrency() < client.initial_concurrent
+            assert 0.49 < client._cost_fraction < 0.51
+            # Test at hard limit
+            client.cost = client.cost_hard_limit
+            assert client._recalc_concurrency() == 0
+            assert client._cost_fraction == 1.0
+            # Test above hard limit disconnects
+            client.cost = client.cost_hard_limit + 1
+            with pytest.raises(FinalRPCError):
+                client._recalc_concurrency()
 
     @pytest.mark.asyncio
-    async def test_concurrency_bw_limit_0(self, server):
+    async def test_concurrency_decay(self, server):
         async with Connector(RPCSession, 'localhost', server.port) as client:
-            # Test high bw usage crushes concurrency to 1
-            client.bw_charge = 1000 * 1000 * 1000
-            client.bw_limit = 0
-            prior_mc = client._concurrency.max_concurrent
-            await client._update_concurrency()
-            assert client._concurrency.max_concurrent == prior_mc
+            client.cost_decay_per_sec = 100
+            client.cost = 1000
+            await sleep(0.01)
+            client._recalc_concurrency()
+            assert 995 < client.cost < 999
+
+    @pytest.mark.asyncio
+    async def test_concurrency_hard_limit_0(self, server):
+        async with Connector(RPCSession, 'localhost', server.port) as client:
+            client.cost = 1_000_000_000
+            client.cost_hard_limit = 0
+            assert client._recalc_concurrency() == client.initial_concurrent
+
+    @pytest.mark.asyncio
+    async def test_extra_cost(self, server):
+        async with Connector(RPCSession, 'localhost', server.port) as client:
+            client.extra_cost = lambda: client.cost_soft_limit + 1
+            client._recalc_concurrency()
+            assert client._cost_fraction > 0
+            client.extra_cost = lambda: client.cost_hard_limit + 1
+            with pytest.raises(FinalRPCError):
+                client._recalc_concurrency()
+
+    @pytest.mark.asyncio
+    async def test_request_sleep(self, server):
+        async with Connector(RPCSession, 'localhost', server.port) as client:
+            server = await MyServerSession.current_server()
+            server.bump_cost((server.cost_soft_limit + server.cost_hard_limit) / 2)
+            server.cost_sleep = 0.1
+            t1 = time.time()
+            await client.send_request('echo', [23])
+            t2 = time.time()
+            assert t2 - t1 > server.cost_sleep / 2
 
     @pytest.mark.asyncio
     async def test_close_on_many_errors(self, server):
@@ -745,3 +784,11 @@ class TestMessageSession(object):
     async def test_coverage(self):
         session = MessageSession()
         await session.handle_message(b'')
+
+    @pytest.mark.asyncio
+    async def test_request_sleeps(self, msg_server, caplog):
+        async with Connector(MessageSession, 'localhost', msg_server.port) as client:
+            server = await MessageServer.current_server()
+            server.bump_cost((server.cost_soft_limit + server.cost_hard_limit) / 2)
+            # Messaging doesn't wait, so this is just for code coverage
+            await client.send_message((b'version', b'abc'))
