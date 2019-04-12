@@ -165,6 +165,19 @@ class TestRPCSession:
         assert in_caplog(caplog, 'unsent request')
 
     @pytest.mark.asyncio
+    async def test_unanswered_request_count(self, server):
+        async with Connector(RPCSession, 'localhost', server.port) as client:
+            server_session = await MyServerSession.current_server()
+            # Wait for the loop to start the message processing task, sigh
+            await sleep(0)
+            assert client.unanswered_request_count() == 0
+            assert server_session.unanswered_request_count() == 0
+            async with ignore_after(0.01):
+                await client.send_request('sleepy')
+            assert client.unanswered_request_count() == 0
+            assert server_session.unanswered_request_count() == 1
+
+    @pytest.mark.asyncio
     async def test_send_request_bad_args(self, server):
         async with Connector(RPCSession, 'localhost', server.port) as client:
             # ProtocolError as it's a protocol violation
@@ -663,7 +676,7 @@ async def test_base_class_implementation():
         SessionBase()
     session = SessionBase(framer=NewlineFramer())
     with pytest.raises(NotImplementedError):
-        session._receive_messages(None)
+        session._receive_messages()
 
 
 def test_default_and_passed_connection():
