@@ -6,7 +6,7 @@ from .session import *
 from .util import *
 
 
-_version_str = '0.13.1'
+_version_str = '0.13.2'
 _version = tuple(int(part) for part in _version_str.split('.'))
 
 
