@@ -29,13 +29,14 @@ __all__ = ('Connector', 'RPCSession', 'MessageSession', 'Server', 'ExcessiveSess
 
 
 import asyncio
+from contextlib import suppress
 import logging
 from math import ceil
 import time
 
 from aiorpcx.curio import (
     Event, TaskGroup, TaskTimeout, CancelledError,
-    timeout_after, spawn_sync, ignore_after, sleep
+    timeout_after, spawn_sync, ignore_after, sleep, NoRemainingTasksError
 )
 from aiorpcx.framing import (
     NewlineFramer, BitcoinFramer,
@@ -153,7 +154,7 @@ class SessionBase(asyncio.Protocol):
         # Cleared when the send socket is full
         self._can_send = self.event()
         self._can_send.set()
-        self._task_group = TaskGroup()
+        self._task = None
         # Force-close a connection if a send doesn't succeed in this time
         self.max_send_delay = 60
         # Statistics.  The RPC object also keeps its own statistics.
@@ -165,6 +166,7 @@ class SessionBase(asyncio.Protocol):
         self.recv_count = 0
         self.recv_size = 0
         self.last_recv = self.start_time
+        self.processing_count = 0
         # Resource usage
         self.cost = 0.0
         self._cost_last = 0.0
@@ -174,7 +176,20 @@ class SessionBase(asyncio.Protocol):
         self._concurrency = Concurrency(self.initial_concurrent)
         self._cost_check_delta = max(self.cost_soft_limit // 4, 100)
 
-    def _receive_messages(self):
+    async def _process_messages(self):
+        async with TaskGroup() as group:
+            await group.spawn(self._receive_messages(group))
+            await group.spawn(self._reap_tasks(group))
+
+    async def _reap_tasks(self, group):
+        while True:
+            try:
+                await group.next_result()
+            except NoRemainingTasksError:   # Can happen when the group is cancelled
+                break
+            self.processing_count -= 1
+
+    def _receive_messages(self, group):
         raise NotImplementedError
 
     async def _limited_wait(self, secs):
@@ -244,7 +259,7 @@ class SessionBase(asyncio.Protocol):
             self._proxy_address = peer_address
         else:
             self._address = peer_address
-        self._task = spawn_sync(self._receive_messages(), loop=self.loop)
+        self._task = spawn_sync(self._process_messages(), loop=self.loop)
 
     def connection_lost(self, exc):
         '''Called by asyncio when the connection closes.
@@ -335,10 +350,13 @@ class SessionBase(asyncio.Protocol):
     async def close(self, *, force_after=30):
         '''Close the connection and return when closed.'''
         self._close()
-        async with ignore_after(force_after):
+        if self._task:
+            async with ignore_after(force_after):
+                await self.closed_event.wait()
+            self.abort()
             await self.closed_event.wait()
-        self.abort()
-        await self.closed_event.wait()
+            with suppress(CancelledError):
+                await self._task
 
 
 class MessageSession(SessionBase):
@@ -348,7 +366,7 @@ class MessageSession(SessionBase):
     To use as a client (connection-opening) session, pass host, port
     and perhaps a proxy.
     '''
-    async def _receive_messages(self):
+    async def _receive_messages(self, group):
         while not self.is_closing():
             try:
                 message = await self.framer.receive_message()
@@ -376,7 +394,8 @@ class MessageSession(SessionBase):
             else:
                 self.last_recv = time.time()
                 self.recv_count += 1
-                await self._throttled_message(message)
+                self.processing_count += 1
+                await group.spawn(self._throttled_message(message))
 
     async def _throttled_message(self, message):
         '''Process a single request, respecting the concurrency limit.'''
@@ -492,7 +511,7 @@ class RPCSession(SessionBase):
         super().__init__(framer=framer, loop=loop)
         self.connection = connection or self.default_connection()
 
-    async def _receive_messages(self):
+    async def _receive_messages(self, group):
         while not self.is_closing():
             try:
                 message = await self.framer.receive_message()
@@ -513,8 +532,9 @@ class RPCSession(SessionBase):
                     self.max_errors = 0
                 self._bump_errors()
             else:
+                self.processing_count += len(requests)
                 for request in requests:
-                    await self._throttled_request(request)
+                    await group.spawn(self._throttled_request(request))
 
     async def _throttled_request(self, request):
         '''Process a single request, respecting the concurrency limit.'''

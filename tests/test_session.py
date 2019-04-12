@@ -405,8 +405,7 @@ class TestRPCSession:
     @pytest.mark.asyncio
     async def test_close_on_many_errors(self, server):
         try:
-            async with Connector(RPCSession, 'localhost',
-                                 server.port) as client:
+            async with Connector(RPCSession, 'localhost', server.port) as client:
                 server_session = await MyServerSession.current_server()
                 for n in range(server_session.max_errors + 1):
                     with suppress(RPCError):
@@ -664,7 +663,7 @@ async def test_base_class_implementation():
         SessionBase()
     session = SessionBase(framer=NewlineFramer())
     with pytest.raises(NotImplementedError):
-        session._receive_messages()
+        session._receive_messages(None)
 
 
 def test_default_and_passed_connection():

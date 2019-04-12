@@ -50,7 +50,7 @@ from aiorpcx.util import instantiate_coroutine, check_task
 
 __all__ = (
     'Queue', 'Event', 'Lock', 'Semaphore', 'sleep', 'CancelledError',
-    'run_in_thread', 'spawn', 'spawn_sync', 'TaskGroup',
+    'run_in_thread', 'spawn', 'spawn_sync', 'TaskGroup', 'NoRemainingTasksError',
     'TaskTimeout', 'TimeoutCancellationError', 'UncaughtTimeoutError',
     'timeout_after', 'timeout_at', 'ignore_after', 'ignore_at',
 )
@@ -79,6 +79,10 @@ def spawn_sync(coro, *args, loop=None, report_crash=True):
     if report_crash:
         task.add_done_callback(partial(check_task, logging))
     return task
+
+
+class NoRemainingTasksError(RuntimeError):
+    pass
 
 
 class TaskGroup(object):
@@ -166,7 +170,7 @@ class TaskGroup(object):
         are available.'''
         task = await self.next_done()
         if not task:
-            raise RuntimeError('no tasks remain')
+            raise NoRemainingTasksError('no tasks remain')
         return task.result()
 
     async def join(self):
