@@ -9,6 +9,7 @@ from functools import partial
 import pytest
 
 from aiorpcx import *
+from aiorpcx.session import Concurrency
 from util import RaiseTest
 
 
@@ -349,7 +350,7 @@ class TestRPCSession:
             # Test above hard limit disconnects
             client.cost = client.cost_hard_limit + 1
             client.recalc_concurrency()
-            with pytest.raises(FinalRPCError):
+            with pytest.raises(ExcessiveSessionCostError):
                 async with client._concurrency:
                     pass
 
@@ -381,6 +382,16 @@ class TestRPCSession:
             assert client._cost_fraction > 1
 
     @pytest.mark.asyncio
+    async def test_request_over_hard_limit(self, server):
+        async with Connector(RPCSession, 'localhost', server.port) as client:
+            server = await MyServerSession.current_server()
+            server.bump_cost(server.cost_hard_limit + 100)
+            async with timeout_after(0.1):
+                with pytest.raises(RPCError) as e:
+                    await client.send_request('echo', [23])
+            assert 'excessive resource usage' in str(e.value)
+
+    @pytest.mark.asyncio
     async def test_request_sleep(self, server):
         async with Connector(RPCSession, 'localhost', server.port) as client:
             server = await MyServerSession.current_server()
@@ -408,7 +419,7 @@ class TestRPCSession:
     async def test_finalrpcerror(self, server):
         async with Connector(RPCSession, 'localhost',
                              server.port) as client:
-            with pytest.raises(RPCError) as e:
+            with pytest.raises(RPCError):
                 await client.send_request('incompatibleversion')
             await sleep(0)
             assert client.is_closing()
@@ -798,3 +809,70 @@ class TestMessageSession(object):
             server.bump_cost((server.cost_soft_limit + server.cost_hard_limit) / 2)
             # Messaging doesn't wait, so this is just for code coverage
             await client.send_message((b'version', b'abc'))
+
+    @pytest.mark.asyncio
+    async def test_request_over_hard_limit(self, msg_server):
+        async with Connector(MessageSession, 'localhost', msg_server.port) as client:
+            server = await MessageServer.current_server()
+            server.bump_cost(server.cost_hard_limit + 100)
+            await client.send_message((b'version', b'abc'))
+            await sleep(0.005)
+            assert client.is_closing()
+
+
+async def concurrency_max(c):
+    q = []
+
+    loop = asyncio.get_event_loop()
+    fut = loop.create_future()
+
+    async def work():
+        async with c:
+            q.append(None)
+            await fut
+
+    tasks = []
+    for n in range(16):
+        tasks.append(loop.create_task(work()))
+        prior_len = len(q)
+        await asyncio.sleep(0)
+        if len(q) == prior_len:
+            break
+
+    fut.set_result(len(q))
+    if tasks:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, loop=loop, return_exceptions=True)
+
+    return fut.result()
+
+
+class TestConcurrency:
+    def test_concurrency_constructor(self):
+        Concurrency(3)
+        Concurrency(target=6)
+        Concurrency(target=0)
+        with pytest.raises(ValueError):
+            Concurrency(target=-1)
+
+    @pytest.mark.asyncio
+    async def test_max_concurrent(self):
+        c = Concurrency(target=3)
+        assert c.max_concurrent == 3
+        assert await concurrency_max(c) == 3
+        c.set_target(3)
+        assert c.max_concurrent == 3
+        assert await concurrency_max(c) == 3
+        c.set_target(1)
+        assert c.max_concurrent == 1
+        assert await concurrency_max(c) == 1
+
+        c.set_target(0)
+        assert c.max_concurrent == 0
+        with pytest.raises(ExcessiveSessionCostError):
+            async with c:
+                pass
+        c.set_target(5)
+        assert c.max_concurrent == 5
+        assert await concurrency_max(c) == 5

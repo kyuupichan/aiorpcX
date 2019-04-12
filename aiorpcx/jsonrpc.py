@@ -167,6 +167,7 @@ class JSONRPC(object):
     INTERNAL_ERROR = -32603
     # Codes specific to this library
     ERROR_CODE_UNAVAILABLE = -100
+    EXCESSIVE_RESOURCE_USAGE = -101
 
     # Can be overridden by derived classes
     allow_batches = True

@@ -24,7 +24,7 @@
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
-__all__ = ('Connector', 'RPCSession', 'MessageSession', 'Server',
+__all__ = ('Connector', 'RPCSession', 'MessageSession', 'Server', 'ExcessiveSessionCostError',
            'BatchError')
 
 
@@ -35,7 +35,7 @@ import time
 
 from aiorpcx.curio import (
     Event, TaskGroup, TaskTimeout, CancelledError,
-    spawn, timeout_after, spawn_sync, ignore_after, sleep
+    timeout_after, spawn_sync, ignore_after, sleep
 )
 from aiorpcx.framing import (
     NewlineFramer, BitcoinFramer,
@@ -45,7 +45,6 @@ from aiorpcx.jsonrpc import (
     Request, Batch, Notification, ProtocolError, RPCError, FinalRPCError,
     JSONRPC, JSONRPCv2, JSONRPCConnection
 )
-from aiorpcx.util import Concurrency
 
 
 class Connector(object):
@@ -73,6 +72,43 @@ class Connector(object):
 
     async def __aexit__(self, exc_type, exc_value, traceback):
         await self.protocol.close()
+
+
+class ExcessiveSessionCostError(RuntimeError):
+    pass
+
+
+class Concurrency(object):
+
+    def __init__(self, target):
+        self._target = int(target)
+        self._semaphore = asyncio.Semaphore(self._target)
+        self._sem_value = self._target
+
+    async def _retarget_semaphore(self):
+        while self._sem_value != self._target:
+            if self._target <= 0:
+                raise ExcessiveSessionCostError
+            if self._sem_value > self._target:
+                await self._semaphore.acquire()
+                self._sem_value -= 1
+            else:
+                self._semaphore.release()
+                self._sem_value += 1
+
+    @property
+    def max_concurrent(self):
+        return self._target
+
+    def set_target(self, target):
+        self._target = int(target)
+
+    async def __aenter__(self):
+        await self._retarget_semaphore()
+        await self._semaphore.acquire()
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        self._semaphore.release()
 
 
 class SessionBase(asyncio.Protocol):
@@ -249,7 +285,7 @@ class SessionBase(asyncio.Protocol):
         cost = self.cost + self.extra_cost()
         self._cost_fraction = max(0.0, (cost - self.cost_soft_limit) / cost_soft_range)
 
-        target = ceil((1.0 - self._cost_fraction) * self.initial_concurrent)
+        target = max(0, ceil((1.0 - self._cost_fraction) * self.initial_concurrent))
         if target != value:
             self.logger.info(f'changing task concurrency from {value} to {target}')
         self._concurrency.set_target(target)
@@ -344,19 +380,21 @@ class MessageSession(SessionBase):
 
     async def _throttled_message(self, message):
         '''Process a single request, respecting the concurrency limit.'''
-        async with self._concurrency:
-            if self._cost_fraction:
-                await sleep(self._cost_fraction * self.cost_sleep)
-            try:
+        try:
+            async with self._concurrency:
+                if self._cost_fraction:
+                    await sleep(self._cost_fraction * self.cost_sleep)
                 await self.handle_message(message)
-            except ProtocolError as e:
-                self.logger.error(f'{e}')
-                self._bump_errors()
-            except CancelledError:
-                raise
-            except Exception:
-                self.logger.exception(f'exception handling {message}')
-                self._bump_errors()
+        except ProtocolError as e:
+            self.logger.error(f'{e}')
+            self._bump_errors()
+        except ExcessiveSessionCostError:
+            self._close()
+        except CancelledError:
+            raise
+        except Exception:
+            self.logger.exception(f'exception handling {message}')
+            self._bump_errors()
 
     # External API
     def default_framer(self):
@@ -480,28 +518,31 @@ class RPCSession(SessionBase):
 
     async def _throttled_request(self, request):
         '''Process a single request, respecting the concurrency limit.'''
-        async with self._concurrency:
-            if self._cost_fraction:
-                await sleep(self._cost_fraction * self.cost_sleep)
-            try:
+        try:
+            async with self._concurrency:
+                if self._cost_fraction:
+                    await sleep(self._cost_fraction * self.cost_sleep)
                 result = await self.handle_request(request)
-            except (ProtocolError, RPCError) as e:
-                result = e
-            except CancelledError:
-                raise
-            except Exception:
-                self.logger.exception(f'exception handling {request}')
-                result = RPCError(JSONRPC.INTERNAL_ERROR,
-                                  'internal server error')
-            if isinstance(request, Request):
-                message = request.send_result(result)
-                if message:
-                    await self._send_message(message)
+        except (ProtocolError, RPCError) as e:
+            result = e
+        except ExcessiveSessionCostError:
+            result = FinalRPCError(JSONRPC.EXCESSIVE_RESOURCE_USAGE, 'excessive resource usage')
+        except CancelledError:
+            raise
+        except Exception:
+            self.logger.exception(f'exception handling {request}')
+            result = RPCError(JSONRPC.INTERNAL_ERROR,
+                              'internal server error')
+
+        if isinstance(request, Request):
+            message = request.send_result(result)
+            if message:
+                await self._send_message(message)
+        if isinstance(result, Exception):
+            self._bump_errors()
             if isinstance(result, FinalRPCError):
                 # Don't await self.close() because that is self-cancelling
                 self._close()
-            elif isinstance(result, Exception):
-                self._bump_errors()
 
     def connection_lost(self, exc):
         # Cancel pending requests and message processing

@@ -1,11 +1,7 @@
 import asyncio
 from functools import partial
 
-import pytest
-
-from aiorpcx import FinalRPCError
-from aiorpcx.util import (SignatureInfo, signature_info, Concurrency,
-                          is_async_call)
+from aiorpcx.util import SignatureInfo, signature_info, is_async_call
 
 
 async def coro(x, y):
@@ -22,61 +18,3 @@ def test_is_async_call():
     assert not is_async_call(partial(is_async_call))
     # Lose a warning
     asyncio.get_event_loop().run_until_complete(z)
-
-
-def test_concurrency_constructor():
-    Concurrency(3)
-    Concurrency(target=6)
-    Concurrency(target=0)
-    with pytest.raises(ValueError):
-        Concurrency(target=-1)
-
-
-async def concurrency_max(c):
-    q = []
-
-    loop = asyncio.get_event_loop()
-    fut = loop.create_future()
-
-    async def work():
-        async with c:
-            q.append(None)
-            await fut
-
-    tasks = []
-    for n in range(16):
-        tasks.append(loop.create_task(work()))
-        prior_len = len(q)
-        await asyncio.sleep(0)
-        if len(q) == prior_len:
-            break
-
-    fut.set_result(len(q))
-    if tasks:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, loop=loop, return_exceptions=True)
-
-    return fut.result()
-
-
-@pytest.mark.asyncio
-async def test_max_concurrent():
-    c = Concurrency(target=3)
-    assert c.max_concurrent == 3
-    assert await concurrency_max(c) == 3
-    c.set_target(3)
-    assert c.max_concurrent == 3
-    assert await concurrency_max(c) == 3
-    c.set_target(1)
-    assert c.max_concurrent == 1
-    assert await concurrency_max(c) == 1
-
-    c.set_target(0)
-    assert c.max_concurrent == 0
-    with pytest.raises(FinalRPCError):
-        async with c:
-            pass
-    c.set_target(5)
-    assert c.max_concurrent == 5
-    assert await concurrency_max(c) == 5
