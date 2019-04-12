@@ -4,6 +4,11 @@ ChangeLog
 .. note:: The aiorpcX API changes regularly and is still unstable
 
 
+Version 0.13.1 (12 Apr 2019)
+----------------------------
+
+* wait for task to complete on close.  Concurrency improvements.
+
 Version 0.13.0 (12 Apr 2019)
 ----------------------------
 
