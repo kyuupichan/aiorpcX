@@ -4,7 +4,7 @@ ChangeLog
 .. note:: The aiorpcX API changes regularly and is still unstable
 
 
-Version 0.13.4 (13 Apr 2019)
+Version 0.13.5 (13 Apr 2019)
 ----------------------------
 
 * robustify concurrency handling
