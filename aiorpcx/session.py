@@ -25,7 +25,7 @@
 
 
 __all__ = ('Connector', 'RPCSession', 'MessageSession', 'Server', 'ExcessiveSessionCostError',
-           'BatchError')
+           'BatchError', 'Concurrency')
 
 
 import asyncio
@@ -136,9 +136,9 @@ class SessionBase(asyncio.Protocol):
     # Resource usage is reduced by this every second
     cost_decay_per_sec = cost_hard_limit / 3600
     # Request delay ranges from 0 to this between cost_soft_limit and cost_hard_limit
-    cost_sleep = 5.0
+    cost_sleep = 2.0
     # Initial number of requests that can be concurrently processed
-    initial_concurrent = 6
+    initial_concurrent = 20
 
     def __init__(self, *, framer=None, loop=None):
         self.framer = framer or self.default_framer()
