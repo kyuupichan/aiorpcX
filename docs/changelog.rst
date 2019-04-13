@@ -4,6 +4,11 @@ ChangeLog
 .. note:: The aiorpcX API changes regularly and is still unstable
 
 
+Version 0.13.3 (13 Apr 2019)
+----------------------------
+
+* export Concurrency class.  Tweak some default constants.
+
 Version 0.13.2 (12 Apr 2019)
 ----------------------------
 
