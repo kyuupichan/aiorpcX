@@ -843,7 +843,6 @@ class TestConcurrency:
     @pytest.mark.asyncio
     async def test_concurrency_control(self):
         in_flight = 0
-        loop = asyncio.get_event_loop()
         c = Concurrency(target=3)
         pause = 0.01
         counter = 0
@@ -901,3 +900,31 @@ class TestConcurrency:
             task.cancel()
             with suppress(CancelledError, ExcessiveSessionCostError):
                 await task
+
+    @pytest.mark.asyncio
+    async def test_retarget_accounting(self):
+        c = Concurrency(target=2)
+
+        async def worker(n):
+            async with c:
+                await sleep(0.001 * n)
+            if n == 1:
+                c.set_target(1)
+
+        tasks = [await spawn(worker, n) for n in range(1, 4)]
+        # Whilst this task sleeps, the sequence is:
+        # Worker 1 grabs C and sleeps
+        # Worker 2 grabs C and sleeps
+        # Worker 3 cannot grab C, so sleeps
+        # Worker 1 wakes up, sets target to 1, ends releasing C
+        # Worker 3 wakes up, grabs C, and retargets before entering the context block.
+        #          It sleeps trying to acquire the semaphore.
+        # Worker 2 wakes up, ends releasing C
+        # Worker 3 wakes up, enters the context block, sleeps, and ends releasing C.
+        #
+        # This is a test that worker 3, when retargetting, decrements C._sem_value before
+        # sleeping.  If it doesn't, worker 2, on exiting its context block, thinks nothing else
+        # nothing is trying to retarget the semaphore, and so reduces C._sem_value instead
+        # of releasing the semaphore.  This means that worker 3 never wakes up.
+        await sleep(0.02)
+        assert not c._semaphore.locked()

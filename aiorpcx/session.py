@@ -68,7 +68,7 @@ class Connector(object):
     async def __aenter__(self):
         _transport, self.protocol = await self.create_connection()
         # By default, do not limit outgoing connections
-        self.ru_hard_limit = 0
+        self.cost_hard_limit = 0
         return self.protocol
 
     async def __aexit__(self, exc_type, exc_value, traceback):
@@ -90,8 +90,9 @@ class Concurrency(object):
         if self._target <= 0:
             raise ExcessiveSessionCostError
         while self._sem_value > self._target:
-            await self._semaphore.acquire()
+            # The order of these two statements is crucial!
             self._sem_value -= 1
+            await self._semaphore.acquire()
         while self._sem_value < self._target:
             self._sem_value += 1
             self._semaphore.release()
