@@ -832,34 +832,6 @@ class TestMessageSession(object):
             assert client.is_closing()
 
 
-async def concurrency_max(c):
-    q = []
-
-    loop = asyncio.get_event_loop()
-    fut = loop.create_future()
-
-    async def work():
-        async with c:
-            q.append(None)
-            await fut
-
-    tasks = []
-    for n in range(16):
-        tasks.append(loop.create_task(work()))
-        prior_len = len(q)
-        await asyncio.sleep(0)
-        if len(q) == prior_len:
-            break
-
-    fut.set_result(len(q))
-    if tasks:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, loop=loop, return_exceptions=True)
-
-    return fut.result()
-
-
 class TestConcurrency:
     def test_concurrency_constructor(self):
         Concurrency(3)
@@ -869,22 +841,63 @@ class TestConcurrency:
             Concurrency(target=-1)
 
     @pytest.mark.asyncio
-    async def test_max_concurrent(self):
+    async def test_concurrency_control(self):
+        in_flight = 0
+        loop = asyncio.get_event_loop()
         c = Concurrency(target=3)
-        assert c.max_concurrent == 3
-        assert await concurrency_max(c) == 3
-        c.set_target(3)
-        assert c.max_concurrent == 3
-        assert await concurrency_max(c) == 3
-        c.set_target(1)
-        assert c.max_concurrent == 1
-        assert await concurrency_max(c) == 1
+        pause = 0.01
+        counter = 0
 
-        c.set_target(0)
-        assert c.max_concurrent == 0
-        with pytest.raises(ExcessiveSessionCostError):
-            async with c:
-                pass
-        c.set_target(5)
-        assert c.max_concurrent == 5
-        assert await concurrency_max(c) == 5
+        async def make_workers():
+            async def worker():
+                nonlocal in_flight, counter
+                async with c:
+                    counter += 1
+                    in_flight += 1
+                    await sleep(pause)
+                    in_flight -=1
+
+            async with TaskGroup() as group:
+                for n in range(100):
+                    await group.spawn(worker)
+
+        async def get_stable_in_flight():
+            nonlocal in_flight
+            prior = in_flight
+            while True:
+                await sleep(0)
+                if in_flight == prior:
+                    return in_flight
+                prior = in_flight
+
+        task = await spawn(make_workers)
+        try:
+            await sleep(0)
+            assert await get_stable_in_flight() == 3
+            c.set_target(3)
+            await sleep(pause * 1.1)
+            assert await get_stable_in_flight() == 3
+            c.set_target(1)
+            await sleep(pause * 1.1)
+            assert await get_stable_in_flight() == 1
+            c.set_target(10)
+            await sleep(pause * 1.1)
+            assert await get_stable_in_flight() == 10
+            c.set_target(1)
+            await sleep(pause * 1.1)
+            assert await get_stable_in_flight() == 1
+            c.set_target(5)
+            await sleep(pause * 1.1)
+            assert await get_stable_in_flight() == 5
+            c.set_target(0)
+            await sleep(pause * 1.1)
+            assert await get_stable_in_flight() == 0
+            # We deliberately don't recover from 0.  To do so set_target needs to release
+            # once if existing value is zero.
+            c.set_target(3)
+            await sleep(pause * 1.1)
+            assert await get_stable_in_flight() == 0
+        finally:
+            task.cancel()
+            with suppress(CancelledError, ExcessiveSessionCostError):
+                await task

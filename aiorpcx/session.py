@@ -87,15 +87,14 @@ class Concurrency(object):
         self._sem_value = self._target
 
     async def _retarget_semaphore(self):
-        while self._sem_value != self._target:
-            if self._target <= 0:
-                raise ExcessiveSessionCostError
-            if self._sem_value > self._target:
-                await self._semaphore.acquire()
-                self._sem_value -= 1
-            else:
-                self._semaphore.release()
-                self._sem_value += 1
+        if self._target <= 0:
+            raise ExcessiveSessionCostError
+        while self._sem_value > self._target:
+            await self._semaphore.acquire()
+            self._sem_value -= 1
+        while self._sem_value < self._target:
+            self._sem_value += 1
+            self._semaphore.release()
 
     @property
     def max_concurrent(self):
@@ -105,11 +104,15 @@ class Concurrency(object):
         self._target = int(target)
 
     async def __aenter__(self):
-        await self._retarget_semaphore()
         await self._semaphore.acquire()
+        await self._retarget_semaphore()
 
     async def __aexit__(self, exc_type, exc_value, traceback):
-        self._semaphore.release()
+        if self._sem_value > self._target:
+            self._sem_value -= 1
+        else:
+            self._semaphore.release()
+
 
 
 class SessionBase(asyncio.Protocol):
@@ -174,7 +177,6 @@ class SessionBase(asyncio.Protocol):
         self._cost_fraction = 0.0
         # Concurrency control
         self._concurrency = Concurrency(self.initial_concurrent)
-        self._cost_check_delta = max(self.cost_soft_limit // 4, 100)
 
     async def _process_messages(self):
         async with self._group:
@@ -268,7 +270,7 @@ class SessionBase(asyncio.Protocol):
     def bump_cost(self, delta):
         # Delta can be positive or negative
         self.cost = max(0, self.cost + delta)
-        if abs(self.cost - self._cost_last) > self._cost_check_delta:
+        if abs(self.cost - self._cost_last) > 100:
             self.recalc_concurrency()
 
     def recalc_concurrency(self):
