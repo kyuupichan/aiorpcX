@@ -114,7 +114,6 @@ class Concurrency(object):
             self._semaphore.release()
 
 
-
 class SessionBase(asyncio.Protocol):
     '''Base class of networking sessions.
 
