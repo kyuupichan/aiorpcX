@@ -299,18 +299,22 @@ class TestRPCSession:
                 client.pause_writing()
 
         async with Connector(RPCSession, 'localhost', server.port) as client:
+            assert not client.is_send_buffer_full()
             try:
                 client.transport.write = my_write
             except AttributeError:    # uvloop: transport.write is read-only
                 return
             await client._send_message(b'a')
+            assert not client.is_send_buffer_full()
             assert called
             called.clear()
 
             async def monitor():
                 await sleep(0.002)
                 assert called == [b'A\n', b'very\n']
+                assert client.is_send_buffer_full()
                 client.resume_writing()
+                assert not client.is_send_buffer_full()
 
             limit = 2
             msgs = b'A very long and boring meessage'.split()

@@ -267,6 +267,10 @@ class SessionBase(asyncio.Protocol):
         self._can_send.set()
 
     # External API
+    def is_send_buffer_full(self):
+        '''Return True if the send socket buffer is full.'''
+        return not self._can_send.is_set()
+
     def bump_cost(self, delta):
         # Delta can be positive or negative
         self.cost = max(0, self.cost + delta)
