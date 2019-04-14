@@ -518,7 +518,7 @@ class RPCSession(SessionBase):
     def __init__(self, *, framer=None, loop=None, connection=None):
         super().__init__(framer=framer, loop=loop)
         self.connection = connection or self.default_connection()
-        # Concurrency control for ougoing request sending
+        # Concurrency control for outgoing request sending
         self._outgoing_concurrency = Concurrency(50)
         self._req_times = []
 

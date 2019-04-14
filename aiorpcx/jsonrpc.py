@@ -543,10 +543,6 @@ class JSONRPCLoose(JSONRPC):
 class JSONRPCAutoDetect(JSONRPCv2):
 
     @classmethod
-    def message_to_item(cls, message):
-        return cls.detect_protocol(message), None
-
-    @classmethod
     def detect_protocol(cls, message):
         '''Attempt to detect the protocol from the message.'''
         main = cls._message_to_payload(message)
@@ -717,6 +713,9 @@ class JSONRPCConnection(object):
         paired with a request, the ProtocolError is instead set in the
         result attribute of the send_request() that caused the error.
         '''
+        if self._protocol is JSONRPCAutoDetect:
+            self._protocol = JSONRPCAutoDetect.detect_protocol(message)
+
         try:
             item, request_id = self._protocol.message_to_item(message)
         except ProtocolError as e:
@@ -731,18 +730,13 @@ class JSONRPCConnection(object):
             return [item]
         if isinstance(item, Response):
             return self._receive_response(item.result, request_id)
-        if isinstance(item, list):
-            if all(isinstance(payload, dict)
-                   and ('result' in payload or 'error' in payload)
-                   for payload in item):
-                return self._receive_response_batch(item)
-            else:
-                return self._receive_request_batch(item)
+
+        assert isinstance(item, list)
+        if all(isinstance(payload, dict) and ('result' in payload or 'error' in payload)
+               for payload in item):
+            return self._receive_response_batch(item)
         else:
-            # Protocol auto-detection hack
-            assert issubclass(item, JSONRPC)
-            self._protocol = item
-            return self.receive_message(message)
+            return self._receive_request_batch(item)
 
     def cancel_pending_requests(self):
         '''Cancel all pending requests.'''
