@@ -348,17 +348,17 @@ class TestRPCSession:
             # Test usage below soft limit
             client.cost = client.cost_soft_limit - 10
             client.recalc_concurrency()
-            assert client._concurrency.max_concurrent == client.initial_concurrent
+            assert client._incoming_concurrency.max_concurrent == client.initial_concurrent
             assert client._cost_fraction == 0.0
             # Test usage at soft limit doesn't affect concurrency
             client.cost = client.cost_soft_limit
             client.recalc_concurrency()
-            assert client._concurrency.max_concurrent == client.initial_concurrent
+            assert client._incoming_concurrency.max_concurrent == client.initial_concurrent
             assert client._cost_fraction == 0.0
             # Test usage half-way
             client.cost = (client.cost_soft_limit + client.cost_hard_limit) // 2
             client.recalc_concurrency()
-            assert 1 < client._concurrency.max_concurrent < client.initial_concurrent
+            assert 1 < client._incoming_concurrency.max_concurrent < client.initial_concurrent
             assert 0.49 < client._cost_fraction < 0.51
             # Test at hard limit
             client.cost = client.cost_hard_limit
@@ -368,7 +368,7 @@ class TestRPCSession:
             client.cost = client.cost_hard_limit + 1
             client.recalc_concurrency()
             with pytest.raises(ExcessiveSessionCostError):
-                async with client._concurrency:
+                async with client._incoming_concurrency:
                     pass
 
     @pytest.mark.asyncio
@@ -386,7 +386,7 @@ class TestRPCSession:
             client.cost = 1_000_000_000
             client.cost_hard_limit = 0
             client.recalc_concurrency()
-            assert client._concurrency.max_concurrent == client.initial_concurrent
+            assert client._incoming_concurrency.max_concurrent == client.initial_concurrent
 
     @pytest.mark.asyncio
     async def test_extra_cost(self, server):
@@ -520,6 +520,30 @@ class TestRPCSession:
             with RaiseTest(JSONRPC.METHOD_NOT_FOUND, 'string', ProtocolError):
                 async with client.send_batch() as batch:
                     batch.add_request(23)
+
+    @pytest.mark.asyncio
+    async def test_send_request_throttling(self, server):
+        async with Connector(RPCSession, 'localhost', server.port) as client:
+            N = 3
+            client.recalibrate_count = N
+            prior = client._outgoing_concurrency.max_concurrent
+            async with TaskGroup() as group:
+                for n in range(N):
+                    await group.spawn(client.send_request("echo", ["ping"]))
+            current = client._outgoing_concurrency.max_concurrent
+            assert prior * 1.2 > current > prior
+
+    @pytest.mark.asyncio
+    async def test_send_batch_throttling(self, server):
+        async with Connector(RPCSession, 'localhost', server.port) as client:
+            N = 3
+            client.recalibrate_count = N
+            prior = client._outgoing_concurrency.max_concurrent
+            async with client.send_batch() as batch:
+                for n in range(N):
+                    batch.add_request("echo", ["ping"])
+            current = client._outgoing_concurrency.max_concurrent
+            assert prior * 1.2 > current > prior
 
 
 class RPCClient(RPCSession):

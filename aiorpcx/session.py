@@ -36,7 +36,7 @@ import time
 
 from aiorpcx.curio import (
     Event, TaskGroup, TaskTimeout, CancelledError,
-    timeout_after, spawn_sync, ignore_after, sleep, NoRemainingTasksError
+    timeout_after, spawn_sync, ignore_after, sleep
 )
 from aiorpcx.framing import (
     NewlineFramer, BitcoinFramer,
@@ -56,8 +56,11 @@ class Connector(object):
         self.host = host
         self.port = port
         self.proxy = proxy
+        self.protocol = None
         self.loop = kwargs.get('loop', asyncio.get_event_loop())
         self.kwargs = kwargs
+        # By default, do not limit outgoing connections
+        self.cost_hard_limit = 0
 
     async def create_connection(self):
         '''Initiate a connection.'''
@@ -67,8 +70,6 @@ class Connector(object):
 
     async def __aenter__(self):
         _transport, self.protocol = await self.create_connection()
-        # By default, do not limit outgoing connections
-        self.cost_hard_limit = 0
         return self.protocol
 
     async def __aexit__(self, exc_type, exc_value, traceback):
@@ -144,6 +145,8 @@ class SessionBase(asyncio.Protocol):
     initial_concurrent = 20
     # Send a "server busy" error if processing a request takes longer than this seconds
     processing_timeout = 15.0
+    # Force-close a connection if its socket send buffer stays full this long
+    max_send_delay = 20.0
 
     def __init__(self, *, framer=None, loop=None):
         self.framer = framer or self.default_framer()
@@ -161,8 +164,6 @@ class SessionBase(asyncio.Protocol):
         self._can_send.set()
         self._task = None
         self._group = TaskGroup()
-        # Force-close a connection if a send doesn't succeed in this time
-        self.max_send_delay = 60
         # Statistics.  The RPC object also keeps its own statistics.
         self.start_time = time.time()
         self.errors = 0
@@ -177,8 +178,8 @@ class SessionBase(asyncio.Protocol):
         self._cost_last = 0.0
         self._cost_time = self.start_time
         self._cost_fraction = 0.0
-        # Concurrency control
-        self._concurrency = Concurrency(self.initial_concurrent)
+        # Concurrency control for incoming request handling
+        self._incoming_concurrency = Concurrency(self.initial_concurrent)
 
     async def _process_messages(self):
         async with self._group:
@@ -208,6 +209,7 @@ class SessionBase(asyncio.Protocol):
             if self.verbosity >= 4:
                 self.logger.debug(f'Sending framed message {framed_message}')
             self.transport.write(framed_message)
+        return self.last_send
 
     def _bump_errors(self):
         self.errors += 1
@@ -291,7 +293,7 @@ class SessionBase(asyncio.Protocol):
         self._cost_last = self.cost
 
         # Setting cost_hard_limit <= 0 means to not limit concurrency
-        value = self._concurrency.max_concurrent
+        value = self._incoming_concurrency.max_concurrent
         cost_soft_range = self.cost_hard_limit - self.cost_soft_limit
         if cost_soft_range <= 0:
             return
@@ -302,7 +304,7 @@ class SessionBase(asyncio.Protocol):
         target = max(0, ceil((1.0 - self._cost_fraction) * self.initial_concurrent))
         if target != value:
             self.logger.info(f'changing task concurrency from {value} to {target}')
-        self._concurrency.set_target(target)
+        self._incoming_concurrency.set_target(target)
 
     def unanswered_request_count(self):
         '''The number of requests received but not yet answered.'''
@@ -403,7 +405,7 @@ class MessageSession(SessionBase):
         '''Process a single request, respecting the concurrency limit.'''
         try:
             async with timeout_after(self.processing_timeout):
-                async with self._concurrency:
+                async with self._incoming_concurrency:
                     if self._cost_fraction:
                         await sleep(self._cost_fraction * self.cost_sleep)
                     await self.handle_message(message)
@@ -497,15 +499,9 @@ class BatchRequest(object):
         if exc_type is None:
             self.batch = Batch(self._requests)
             message, event = self._session.connection.send_batch(self.batch)
-            await self._session._send_message(message)
-            await event.wait()
-            result = event.result
-            # Can happen with cancel_pending_requests
-            if isinstance(result, CancelledError):
-                raise result
-            self.results = result
+            self.results = await self._session._send_concurrent(message, event, len(self.batch))
             if self._raise_errors:
-                if any(isinstance(item, Exception) for item in result):
+                if any(isinstance(item, Exception) for item in self.results):
                     raise BatchError(self)
 
 
@@ -513,9 +509,29 @@ class RPCSession(SessionBase):
     '''Base class for protocols where a message can lead to a response,
     for example JSON RPC.'''
 
+    # Adjust outgoing request concurrency to target a round trip response time of
+    # this many seconds, recalibrating every recalibrate_count requests
+    target_response_time = 3.0
+    recalibrate_count = 30
+
     def __init__(self, *, framer=None, loop=None, connection=None):
         super().__init__(framer=framer, loop=loop)
         self.connection = connection or self.default_connection()
+        # Concurrency control for ougoing request sending
+        self._outgoing_concurrency = Concurrency(50)
+        self._req_times = []
+
+    def _recalc_concurrency(self):
+        req_times = self._req_times
+        avg = sum(req_times) / len(req_times)
+        req_times.clear()
+        current = self._outgoing_concurrency.max_concurrent
+        cap = min(current + max(3, current * 0.1), 250)
+        floor = max(1, min(current * 0.8, current - 1))
+        target = int(0.5 + max(floor, min(cap, current * self.target_response_time / avg)))
+        if target != current:
+            self.logger.info(f'chaning outgoing request concurrency to {target} from {current}')
+            self._outgoing_concurrency.set_target(target)
 
     async def _receive_messages(self):
         while not self.is_closing():
@@ -545,7 +561,7 @@ class RPCSession(SessionBase):
         '''Process a single request, respecting the concurrency limit.'''
         try:
             async with timeout_after(self.processing_timeout):
-                async with self._concurrency:
+                async with self._incoming_concurrency:
                     if self._cost_fraction:
                         await sleep(self._cost_fraction * self.cost_sleep)
                     result = await self.handle_request(request)
@@ -560,8 +576,7 @@ class RPCSession(SessionBase):
             raise
         except Exception:
             self.logger.exception(f'exception handling {request}')
-            result = RPCError(JSONRPC.INTERNAL_ERROR,
-                              'internal server error')
+            result = RPCError(JSONRPC.INTERNAL_ERROR, 'internal server error')
 
         if isinstance(request, Request):
             message = request.send_result(result)
@@ -572,6 +587,25 @@ class RPCSession(SessionBase):
             if isinstance(result, FinalRPCError):
                 # Don't await self.close() because that is self-cancelling
                 self._close()
+
+    async def _send_concurrent(self, message, event, request_count):
+        async with self._outgoing_concurrency:
+            send_time = await self._send_message(message)
+            await event.wait()
+            time_taken = time.time() - send_time
+
+            if request_count == 1:
+                self._req_times.append(time_taken)
+            else:
+                self._req_times.extend([time_taken / request_count] * request_count)
+            if len(self._req_times) >= self.recalibrate_count:
+                self._recalc_concurrency()
+
+            result = event.result
+            # For batches, CancelledError can happen with cancel_pending_requests
+            if isinstance(result, Exception):
+                raise result
+            return result
 
     def connection_lost(self, exc):
         # Cancel pending requests and message processing
@@ -593,12 +627,7 @@ class RPCSession(SessionBase):
     async def send_request(self, method, args=()):
         '''Send an RPC request over the network.'''
         message, event = self.connection.send_request(Request(method, args))
-        await self._send_message(message)
-        await event.wait()
-        result = event.result
-        if isinstance(result, Exception):
-            raise result
-        return result
+        return await self._send_concurrent(message, event, 1)
 
     async def send_notification(self, method, args=()):
         '''Send an RPC notification over the network.'''
