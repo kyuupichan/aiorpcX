@@ -514,6 +514,7 @@ class RPCSession(SessionBase):
     # this many seconds, recalibrating every recalibrate_count requests
     target_response_time = 3.0
     recalibrate_count = 30
+    log_me = False
 
     def __init__(self, *, framer=None, loop=None, connection=None):
         super().__init__(framer=framer, loop=loop)
@@ -544,6 +545,8 @@ class RPCSession(SessionBase):
 
             self.last_recv = time.time()
             self.recv_count += 1
+            if self.log_me:
+                self.logger.info(f'processing {message}')
 
             try:
                 requests = self.connection.receive_message(message)

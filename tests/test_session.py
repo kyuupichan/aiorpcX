@@ -75,6 +75,10 @@ def in_caplog(caplog, message):
     return any(message in record.message for record in caplog.records)
 
 
+def caplog_count(caplog, message):
+    return sum(message in record.message for record in caplog.records)
+
+
 # This runs all the tests one with plain asyncio, then again with uvloop
 @pytest.fixture(scope="session", autouse=True, params=(False, True))
 def use_uvloop(request):
@@ -544,6 +548,20 @@ class TestRPCSession:
                     batch.add_request("echo", ["ping"])
             current = client._outgoing_concurrency.max_concurrent
             assert prior * 1.2 > current > prior
+
+    @pytest.mark.asyncio
+    async def test_log_me(self, server, caplog):
+        async with Connector(RPCSession, 'localhost', server.port) as client:
+            server = await MyServerSession.current_server()
+
+            with caplog.at_level(logging.INFO):
+                assert server.log_me is False
+                await client.send_request('echo', ['ping'])
+                assert caplog_count(caplog, '"method": "echo"') == 0
+
+                server.log_me = True
+                await client.send_request('echo', ['ping'])
+                assert caplog_count(caplog, '"method": "echo"') == 1
 
 
 class RPCClient(RPCSession):
