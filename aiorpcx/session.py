@@ -308,7 +308,8 @@ class SessionBase(asyncio.Protocol):
 
     def unanswered_request_count(self):
         '''The number of requests received but not yet answered.'''
-        return len(self._group._pending) - 1
+        # Max with zero in case the message processing task hasn't yet spawned
+        return max(0, len(self._group._pending) - 1)
 
     def extra_cost(self):
         '''A dynamic value added to this session's cost when deciding how much to throttle
