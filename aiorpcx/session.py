@@ -530,7 +530,7 @@ class RPCSession(SessionBase):
         floor = max(1, min(current * 0.8, current - 1))
         target = int(0.5 + max(floor, min(cap, current * self.target_response_time / avg)))
         if target != current:
-            self.logger.info(f'chaning outgoing request concurrency to {target} from {current}')
+            self.logger.info(f'changing outgoing request concurrency to {target} from {current}')
             self._outgoing_concurrency.set_target(target)
 
     async def _receive_messages(self):
