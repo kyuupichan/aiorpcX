@@ -142,6 +142,8 @@ class SessionBase(asyncio.Protocol):
     cost_sleep = 2.0
     # Initial number of requests that can be concurrently processed
     initial_concurrent = 20
+    # Send a "server busy" error if processing a request takes longer than this seconds
+    processing_timeout = 15.0
 
     def __init__(self, *, framer=None, loop=None):
         self.framer = framer or self.default_framer()
@@ -400,12 +402,16 @@ class MessageSession(SessionBase):
     async def _throttled_message(self, message):
         '''Process a single request, respecting the concurrency limit.'''
         try:
-            async with self._concurrency:
-                if self._cost_fraction:
-                    await sleep(self._cost_fraction * self.cost_sleep)
-                await self.handle_message(message)
+            async with timeout_after(self.processing_timeout):
+                async with self._concurrency:
+                    if self._cost_fraction:
+                        await sleep(self._cost_fraction * self.cost_sleep)
+                    await self.handle_message(message)
         except ProtocolError as e:
             self.logger.error(f'{e}')
+            self._bump_errors()
+        except TaskTimeout:
+            self.logger.exception('request timeout')
             self._bump_errors()
         except ExcessiveSessionCostError:
             self._close()
@@ -538,12 +544,16 @@ class RPCSession(SessionBase):
     async def _throttled_request(self, request):
         '''Process a single request, respecting the concurrency limit.'''
         try:
-            async with self._concurrency:
-                if self._cost_fraction:
-                    await sleep(self._cost_fraction * self.cost_sleep)
-                result = await self.handle_request(request)
+            async with timeout_after(self.processing_timeout):
+                async with self._concurrency:
+                    if self._cost_fraction:
+                        await sleep(self._cost_fraction * self.cost_sleep)
+                    result = await self.handle_request(request)
         except (ProtocolError, RPCError) as e:
             result = e
+        except TaskTimeout:
+            self.logger.debug(f'request timed out')
+            result = RPCError(JSONRPC.SERVER_BUSY, 'server busy - request timed out')
         except ExcessiveSessionCostError:
             result = FinalRPCError(JSONRPC.EXCESSIVE_RESOURCE_USAGE, 'excessive resource usage')
         except CancelledError:

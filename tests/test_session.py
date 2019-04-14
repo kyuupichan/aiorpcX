@@ -420,6 +420,16 @@ class TestRPCSession:
             assert t2 - t1 > server.cost_sleep / 2
 
     @pytest.mark.asyncio
+    async def test_server_busy(self, server):
+        async with Connector(RPCSession, 'localhost', server.port) as client:
+            server = await MyServerSession.current_server()
+            server.processing_timeout = 0.01
+            with pytest.raises(RPCError) as e:
+                await client.send_request('sleepy')
+            assert 'server busy' in str(e.value)
+            assert server.errors == 1
+
+    @pytest.mark.asyncio
     async def test_close_on_many_errors(self, server):
         try:
             async with Connector(RPCSession, 'localhost', server.port) as client:
@@ -721,6 +731,8 @@ class MessageServer(MessageSession):
             raise ProtocolError(2, 'Not allowed')
         elif command == b'cancel':
             raise CancelledError
+        elif command == b'sleep':
+            await sleep(0.1)
 
 @pytest.fixture
 def msg_server(event_loop, unused_tcp_port):
@@ -834,6 +846,16 @@ class TestMessageSession(object):
             await client.send_message((b'version', b'abc'))
             await sleep(0.005)
             assert client.is_closing()
+
+    @pytest.mark.asyncio
+    async def test_server_busy(self, msg_server, caplog):
+        async with Connector(MessageSession, 'localhost', msg_server.port) as client:
+            server = await MessageServer.current_server()
+            server.processing_timeout = 0.01
+            await client.send_message((b'sleep', b''))
+            await sleep(0.02)
+            assert server.errors == 1
+        assert in_caplog(caplog, 'request timeout')
 
 
 class TestConcurrency:

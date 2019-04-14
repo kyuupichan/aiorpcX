@@ -168,6 +168,7 @@ class JSONRPC(object):
     # Codes specific to this library
     ERROR_CODE_UNAVAILABLE = -100
     EXCESSIVE_RESOURCE_USAGE = -101
+    SERVER_BUSY = -102
 
     # Can be overridden by derived classes
     allow_batches = True
