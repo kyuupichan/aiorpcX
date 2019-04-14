@@ -4,6 +4,14 @@ ChangeLog
 .. note:: The aiorpcX API changes regularly and is still unstable
 
 
+Version 0.13.6 (14 Apr 2019)
+----------------------------
+
+* RPCSession: concurrency control of outgoing requests to target a given response time
+* SessionBase: processing_timeout will time-out processing of incoming requests.   This
+  helps prevent ever-growing request backlogs.
+* SessionBase: add is_send_buffer_full()
+
 Version 0.13.5 (13 Apr 2019)
 ----------------------------
 
