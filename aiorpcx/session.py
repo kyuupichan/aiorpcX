@@ -90,10 +90,6 @@ class Concurrency(object):
     async def _retarget_semaphore(self):
         if self._target <= 0:
             raise ExcessiveSessionCostError
-        while self._sem_value > self._target:
-            # The order of these two statements is crucial!
-            self._sem_value -= 1
-            await self._semaphore.acquire()
         while self._sem_value < self._target:
             self._sem_value += 1
             self._semaphore.release()
