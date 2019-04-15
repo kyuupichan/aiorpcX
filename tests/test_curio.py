@@ -592,6 +592,14 @@ async def test_nested_context_timeout3():
 
 
 @pytest.mark.asyncio
+async def test_nested_timeout_again():
+    try:
+        async with timeout_after(0.01):
+            raise TaskTimeout(1.0)
+    except TaskTimeout:
+        pass
+
+@pytest.mark.asyncio
 async def test_nested_timeout_uncaught():
     results = []
 

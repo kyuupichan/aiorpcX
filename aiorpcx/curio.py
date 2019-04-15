@@ -323,7 +323,6 @@ class TimeoutAfter(object):
                 return True
             raise TaskTimeout(self._secs) from None
         if timed_out_deadline is None:
-            assert exc_type is CancelledError
             return False
         if uncaught:
             raise UncaughtTimeoutError('uncaught timeout received')
