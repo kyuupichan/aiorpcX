@@ -4,6 +4,14 @@ ChangeLog
 .. note:: The aiorpcX API changes regularly and is still unstable
 
 
+Version 0.14.0 (15 Apr 2019)
+----------------------------
+
+* timeout handling improvements
+* RPCSession: add log_me, send_request_timeout
+* Concurrency: respect semaphore queue ordering
+* cleaner protocol auto-detection
+
 Version 0.13.6 (14 Apr 2019)
 ----------------------------
 
