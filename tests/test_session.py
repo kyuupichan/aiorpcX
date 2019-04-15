@@ -334,13 +334,12 @@ class TestRPCSession:
     async def test_slow_connection_aborted(self, server):
         async with Connector(RPCSession, 'localhost', server.port) as client:
             assert client.max_send_delay >= 10
-            client.max_send_delay = 0.001
+            client.max_send_delay = 0.004
             client.pause_writing()
             assert not client._can_send.is_set()
-            tasks = [await spawn(client._send_message(b'a'))
-                     for n in range(3)]
-            await sleep(client.max_send_delay * 10)
-            assert all(task.cancelled() for task in tasks)
+            task = await spawn(client._send_message(b'a'))
+            await sleep(client.max_send_delay * 3)
+            assert task.cancelled()
             assert client._can_send.is_set()
             assert client.is_closing()
 
