@@ -550,6 +550,15 @@ class TestRPCSession:
             assert prior * 1.2 > current > prior
 
     @pytest.mark.asyncio
+    async def test_sent_request_timeout(self, server):
+        async with Connector(RPCSession, 'localhost', server.port) as client:
+            client.sent_request_timeout = 0.01
+            start = time.time()
+            with pytest.raises(TaskTimeout):
+                await client.send_request('sleepy')
+            assert time.time() - start < 0.1
+
+    @pytest.mark.asyncio
     async def test_log_me(self, server, caplog):
         async with Connector(RPCSession, 'localhost', server.port) as client:
             server = await MyServerSession.current_server()
@@ -894,10 +903,11 @@ class TestMessageSession(object):
         async with Connector(MessageSession, 'localhost', msg_server.port) as client:
             server = await MessageServer.current_server()
             server.processing_timeout = 0.01
-            await client.send_message((b'sleep', b''))
-            await sleep(0.02)
+            with caplog.at_level(logging.INFO):
+                await client.send_message((b'sleep', b''))
+                await sleep(0.02)
             assert server.errors == 1
-        assert in_caplog(caplog, 'request timeout')
+        assert in_caplog(caplog, 'timed out')
 
 
 class TestConcurrency:

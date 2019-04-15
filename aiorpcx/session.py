@@ -144,7 +144,7 @@ class SessionBase(asyncio.Protocol):
     # Initial number of requests that can be concurrently processed
     initial_concurrent = 20
     # Send a "server busy" error if processing a request takes longer than this seconds
-    processing_timeout = 15.0
+    processing_timeout = 30.0
     # Force-close a connection if its socket send buffer stays full this long
     max_send_delay = 20.0
 
@@ -405,7 +405,8 @@ class MessageSession(SessionBase):
     async def _throttled_message(self, message):
         '''Process a single request, respecting the concurrency limit.'''
         try:
-            async with timeout_after(self.processing_timeout):
+            timeout = self.processing_timeout
+            async with timeout_after(timeout):
                 async with self._incoming_concurrency:
                     if self._cost_fraction:
                         await sleep(self._cost_fraction * self.cost_sleep)
@@ -414,7 +415,7 @@ class MessageSession(SessionBase):
             self.logger.error(f'{e}')
             self._bump_errors()
         except TaskTimeout:
-            self.logger.exception('request timeout')
+            self.logger.info(f'incoming request timed out after {timeout} secs')
             self._bump_errors()
         except ExcessiveSessionCostError:
             self._close()
@@ -514,6 +515,8 @@ class RPCSession(SessionBase):
     # this many seconds, recalibrating every recalibrate_count requests
     target_response_time = 3.0
     recalibrate_count = 30
+    # Raise a TaskTimeout if getting a response takes longer than this
+    sent_request_timeout = 30.0
     log_me = False
 
     def __init__(self, *, framer=None, loop=None, connection=None):
@@ -564,7 +567,8 @@ class RPCSession(SessionBase):
     async def _throttled_request(self, request):
         '''Process a single request, respecting the concurrency limit.'''
         try:
-            async with timeout_after(self.processing_timeout):
+            timeout = self.processing_timeout
+            async with timeout_after(timeout):
                 async with self._incoming_concurrency:
                     if self._cost_fraction:
                         await sleep(self._cost_fraction * self.cost_sleep)
@@ -572,7 +576,7 @@ class RPCSession(SessionBase):
         except (ProtocolError, RPCError) as e:
             result = e
         except TaskTimeout:
-            self.logger.debug(f'request timed out')
+            self.logger.info(f'incoming request {request} timed out after {timeout} secs')
             result = RPCError(JSONRPC.SERVER_BUSY, 'server busy - request timed out')
         except ExcessiveSessionCostError:
             result = FinalRPCError(JSONRPC.EXCESSIVE_RESOURCE_USAGE, 'excessive resource usage')
@@ -595,21 +599,23 @@ class RPCSession(SessionBase):
     async def _send_concurrent(self, message, event, request_count):
         async with self._outgoing_concurrency:
             send_time = await self._send_message(message)
-            await event.wait()
-            time_taken = time.time() - send_time
+            try:
+                async with timeout_after(self.sent_request_timeout):
+                    await event.wait()
+            finally:
+                time_taken = time.time() - send_time
+                if request_count == 1:
+                    self._req_times.append(time_taken)
+                else:
+                    self._req_times.extend([time_taken / request_count] * request_count)
+                if len(self._req_times) >= self.recalibrate_count:
+                    self._recalc_concurrency()
 
-            if request_count == 1:
-                self._req_times.append(time_taken)
-            else:
-                self._req_times.extend([time_taken / request_count] * request_count)
-            if len(self._req_times) >= self.recalibrate_count:
-                self._recalc_concurrency()
-
-            result = event.result
-            # For batches, CancelledError can happen with cancel_pending_requests
-            if isinstance(result, Exception):
-                raise result
-            return result
+        result = event.result
+        # For batches, CancelledError can happen with cancel_pending_requests
+        if isinstance(result, Exception):
+            raise result
+        return result
 
     def connection_lost(self, exc):
         # Cancel pending requests and message processing
