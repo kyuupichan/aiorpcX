@@ -297,7 +297,7 @@ class SessionBase(asyncio.Protocol):
         self._cost_fraction = max(0.0, (cost - self.cost_soft_limit) / cost_soft_range)
 
         target = max(0, ceil((1.0 - self._cost_fraction) * self.initial_concurrent))
-        if target != value:
+        if abs(target - value) > 1:
             self.logger.info(f'changing task concurrency from {value} to {target}')
         self._incoming_concurrency.set_target(target)
 
