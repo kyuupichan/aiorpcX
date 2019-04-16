@@ -137,7 +137,10 @@ class CodeMessageError(Exception):
 
 
 class RPCError(CodeMessageError):
-    pass
+
+    def __init__(self, code, message, *, cost=0.0):
+        super().__init__(code, message)
+        self.cost = cost
 
 
 class FinalRPCError(RPCError):

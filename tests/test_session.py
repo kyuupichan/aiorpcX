@@ -27,7 +27,6 @@ def raises_method_not_found(message):
 class MyServerSession(RPCSession):
 
     _current_server = None
-    max_errors = 10
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -63,6 +62,9 @@ class MyServerSession(RPCSession):
 
     async def on_bug(self):
         raise ValueError
+
+    async def on_costly_error(self, cost):
+        raise RPCError(1, "that cost a bunch!", cost=cost)
 
     async def on_incompatibleversion(self):
         raise FinalRPCError(1, "incompatible version")
@@ -206,15 +208,30 @@ class TestRPCSession:
         assert server_session.errors == 0
 
     @pytest.mark.asyncio
-    async def test_send_ill_formed(self, server):
+    async def test_error_base_cost(self, server):
         async with Connector(RPCSession, 'localhost', server.port) as client:
             server_session = await MyServerSession.current_server()
-            server_session.max_errors = 1
+            server_session.error_base_cost = server_session.cost_hard_limit * 1.1
             await client._send_message(b'')
             await sleep(0.002)
             assert server_session.errors == 1
-            # Check we got cut-off
+            assert server_session.cost > server_session.cost_hard_limit
+            # Check next request raises and cuts us off
+            with pytest.raises(RPCError):
+                await client.send_request('echo', [23])
             assert client.is_closing()
+
+    @pytest.mark.asyncio
+    async def test_RPCError_cost(self, server):
+        async with Connector(RPCSession, 'localhost', server.port) as client:
+            server_session = await MyServerSession.current_server()
+            err = RPCError(0, 'message')
+            assert err.cost == 0
+            with pytest.raises(RPCError):
+                await client.send_request('costly_error', [1000])
+            # It can trigger a cost recalc which refunds a tad
+            epsilon = 0.1
+            assert server_session.cost > server_session.error_base_cost + 1000 - epsilon
 
     @pytest.mark.asyncio
     async def test_send_notification(self, server):
@@ -431,18 +448,6 @@ class TestRPCSession:
                 await client.send_request('sleepy')
             assert 'server busy' in str(e.value)
             assert server.errors == 1
-
-    @pytest.mark.asyncio
-    async def test_close_on_many_errors(self, server):
-        try:
-            async with Connector(RPCSession, 'localhost', server.port) as client:
-                server_session = await MyServerSession.current_server()
-                for n in range(server_session.max_errors + 1):
-                    with suppress(RPCError):
-                        await client.send_request('boo')
-        except CancelledError:
-            pass
-        assert server_session.errors == server_session.max_errors
 
     @pytest.mark.asyncio
     async def test_finalrpcerror(self, server):

@@ -126,17 +126,18 @@ class SessionBase(asyncio.Protocol):
     on entry to the block, and closed on exit from the block.
     '''
 
-    max_errors = 10
     # Multiply this by bandwidth bytes used to get resource usage cost
     bw_cost_per_byte = 1 / 100000
     # If cost is over this requests begin to get delayed and concurrency is reduced
-    cost_soft_limit = 10000
+    cost_soft_limit = 2000
     # If cost is over this the session is closed
-    cost_hard_limit = 50000
+    cost_hard_limit = 10000
     # Resource usage is reduced by this every second
     cost_decay_per_sec = cost_hard_limit / 3600
     # Request delay ranges from 0 to this between cost_soft_limit and cost_hard_limit
     cost_sleep = 2.0
+    # Base cost of an error.  Errors that took resources to discover incur additional costs
+    error_base_cost = 100.0
     # Initial number of requests that can be concurrently processed
     initial_concurrent = 20
     # Send a "server busy" error if processing a request takes longer than this seconds
@@ -207,11 +208,9 @@ class SessionBase(asyncio.Protocol):
             self.transport.write(framed_message)
         return self.last_send
 
-    def _bump_errors(self):
+    def _bump_errors(self, exception=None):
         self.errors += 1
-        if self.errors >= self.max_errors:
-            # Don't await self.close() because that is self-cancelling
-            self._close()
+        self.bump_cost(self.error_base_cost + getattr(exception, 'cost', 0.0))
 
     def _close(self):
         if self.transport:
@@ -378,6 +377,7 @@ class MessageSession(SessionBase):
                     f'bad network magic: got {magic} expected {expected}, '
                     f'disconnecting'
                 )
+                self._bump_errors(e)
                 self._close()
             except OversizedPayloadError as e:
                 command, payload_len = e.args
@@ -385,6 +385,7 @@ class MessageSession(SessionBase):
                     f'oversized payload of {payload_len:,d} bytes to command '
                     f'{command}, disconnecting'
                 )
+                self._bump_errors(e)
                 self._close()
             except BadChecksumError as e:
                 payload_checksum, claimed_checksum = e.args
@@ -392,7 +393,7 @@ class MessageSession(SessionBase):
                     f'checksum mismatch: actual {payload_checksum.hex()} '
                     f'vs claimed {claimed_checksum.hex()}'
                 )
-                self._bump_errors()
+                self._bump_errors(e)
             else:
                 self.last_recv = time.time()
                 self.recv_count += 1
@@ -409,7 +410,7 @@ class MessageSession(SessionBase):
                     await self.handle_message(message)
         except ProtocolError as e:
             self.logger.error(f'{e}')
-            self._bump_errors()
+            self._bump_errors(e)
         except TaskTimeout:
             self.logger.info(f'incoming request timed out after {timeout} secs')
             self._bump_errors()
@@ -550,12 +551,12 @@ class RPCSession(SessionBase):
             try:
                 requests = self.connection.receive_message(message)
             except ProtocolError as e:
-                self.logger.debug(f'{e}')
+                self.logger.debug(str(e))
+                if e.code == JSONRPC.PARSE_ERROR:
+                    e.cost = self.error_base_cost * 10
+                self._bump_errors(e)
                 if e.error_message:
                     await self._send_message(e.error_message)
-                if e.code == JSONRPC.PARSE_ERROR:
-                    self.max_errors = 0
-                self._bump_errors()
             else:
                 for request in requests:
                     await self._group.spawn(self._throttled_request(request))
@@ -587,7 +588,7 @@ class RPCSession(SessionBase):
             if message:
                 await self._send_message(message)
         if isinstance(result, Exception):
-            self._bump_errors()
+            self._bump_errors(result)
             if isinstance(result, FinalRPCError):
                 # Don't await self.close() because that is self-cancelling
                 self._close()

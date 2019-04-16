@@ -176,15 +176,15 @@ def double_sha256(x):
 
 
 class BadChecksumError(Exception):
-    pass
+    cost = 100
 
 
 class BadMagicError(Exception):
-    pass
+    cost = 1000
 
 
 class OversizedPayloadError(Exception):
-    pass
+    cost = 500
 
 
 class BitcoinFramer(BinaryFramer):
