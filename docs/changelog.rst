@@ -4,6 +4,11 @@ ChangeLog
 .. note:: The aiorpcX API changes regularly and is still unstable
 
 
+Version 0.15.0 (16 Apr 2019)
+----------------------------
+
+* error handling improved to include costing
+
 Version 0.14.1 (16 Apr 2019)
 ----------------------------
 
