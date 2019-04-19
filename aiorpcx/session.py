@@ -212,10 +212,6 @@ class SessionBase(asyncio.Protocol):
         self.errors += 1
         self.bump_cost(self.error_base_cost + getattr(exception, 'cost', 0.0))
 
-    def _close(self):
-        if self.transport:
-            self.transport.close()
-
     # asyncio framework
     def data_received(self, framed_message):
         '''Called by asyncio when a message comes in.'''
@@ -354,7 +350,7 @@ class SessionBase(asyncio.Protocol):
     async def close(self, *, force_after=30):
         '''Close the connection and return when closed.'''
         if self.transport:
-            self._close()
+            self.transport.close()
             try:
                 async with ignore_after(force_after):
                     await self.closed_event.wait()
@@ -381,7 +377,7 @@ class MessageSession(SessionBase):
                     f'disconnecting'
                 )
                 self._bump_errors(e)
-                self._close()
+                await self.close()
             except OversizedPayloadError as e:
                 command, payload_len = e.args
                 self.logger.error(
@@ -389,7 +385,7 @@ class MessageSession(SessionBase):
                     f'{command}, disconnecting'
                 )
                 self._bump_errors(e)
-                self._close()
+                await self.close()
             except BadChecksumError as e:
                 payload_checksum, claimed_checksum = e.args
                 self.logger.warning(
@@ -418,7 +414,7 @@ class MessageSession(SessionBase):
             self.logger.info(f'incoming request timed out after {timeout} secs')
             self._bump_errors()
         except ExcessiveSessionCostError:
-            self._close()
+            await self.close()
         except CancelledError:
             raise
         except Exception:
@@ -593,8 +589,7 @@ class RPCSession(SessionBase):
         if isinstance(result, Exception):
             self._bump_errors(result)
             if isinstance(result, FinalRPCError):
-                # Don't await self.close() because that is self-cancelling
-                self._close()
+                await self.close()
 
     async def _send_concurrent(self, message, event, request_count):
         async with self._outgoing_concurrency:
