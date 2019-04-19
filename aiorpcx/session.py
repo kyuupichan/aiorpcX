@@ -353,12 +353,14 @@ class SessionBase(asyncio.Protocol):
 
     async def close(self, *, force_after=30):
         '''Close the connection and return when closed.'''
-        self._close()
-        if self._task:
-            async with ignore_after(force_after):
+        if self.transport:
+            self._close()
+            try:
+                async with ignore_after(force_after):
+                    await self.closed_event.wait()
+            except TaskTimeout:
+                self.abort()
                 await self.closed_event.wait()
-            self.abort()
-            await self.closed_event.wait()
 
 
 class MessageSession(SessionBase):
