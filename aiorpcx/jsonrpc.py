@@ -27,8 +27,7 @@
 
 __all__ = ('JSONRPC', 'JSONRPCv1', 'JSONRPCv2', 'JSONRPCLoose',
            'JSONRPCAutoDetect', 'Request', 'Notification', 'Batch',
-           'RPCError', 'FinalRPCError', 'ProtocolError',
-           'JSONRPCConnection', 'handler_invocation')
+           'RPCError', 'ProtocolError', 'JSONRPCConnection', 'handler_invocation')
 
 import itertools
 import json
@@ -141,10 +140,6 @@ class RPCError(CodeMessageError):
     def __init__(self, code, message, *, cost=0.0):
         super().__init__(code, message)
         self.cost = cost
-
-
-class FinalRPCError(RPCError):
-    pass
 
 
 class ProtocolError(CodeMessageError):

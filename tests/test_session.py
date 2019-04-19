@@ -66,8 +66,10 @@ class MyServerSession(RPCSession):
     async def on_costly_error(self, cost):
         raise RPCError(1, "that cost a bunch!", cost=cost)
 
-    async def on_incompatibleversion(self):
-        raise FinalRPCError(1, "incompatible version")
+    async def on_disconnect(self, result=RPCError):
+        if result is RPCError:
+            raise ReplyAndDisconnect(RPCError(1, 'incompatible version'))
+        raise ReplyAndDisconnect(result)
 
     async def on_sleepy(self):
         await sleep(10)
@@ -96,7 +98,7 @@ def server(event_loop, unused_tcp_port):
     event_loop.run_until_complete(server.listen())
     yield server
     event_loop.run_until_complete(server.close())
-    event_loop.run_until_complete(sleep(0.001))
+    event_loop.run_until_complete(sleep(0))
 
 
 class TestServer:
@@ -213,7 +215,7 @@ class TestRPCSession:
             server_session = await MyServerSession.current_server()
             server_session.error_base_cost = server_session.cost_hard_limit * 1.1
             await client._send_message(b'')
-            await sleep(0.002)
+            await sleep(0.01)
             assert server_session.errors == 1
             assert server_session.cost > server_session.cost_hard_limit
             # Check next request raises and cuts us off
@@ -238,8 +240,8 @@ class TestRPCSession:
         async with Connector(RPCSession, 'localhost', server.port) as client:
             server = await MyServerSession.current_server()
             await client.send_notification('notify', ['test'])
-        # Ensure we've given the server loop time to process the message
-        await asyncio.sleep(0.001)
+            # Ensure we've given the server loop time to process the message
+            await asyncio.sleep(0.01)
         assert server.notifications == ['test']
 
     @pytest.mark.asyncio
@@ -306,7 +308,7 @@ class TestRPCSession:
         async with Connector(RPCSession, 'localhost', server.port):
             pass
 
-        await asyncio.sleep(0.005)  # Let things be processed
+        await asyncio.sleep(0.01)   # Let things be processed
         assert all_tasks(loop) == tasks
 
     @pytest.mark.asyncio
@@ -450,12 +452,20 @@ class TestRPCSession:
             assert server.errors == 1
 
     @pytest.mark.asyncio
-    async def test_finalrpcerror(self, server):
-        async with Connector(RPCSession, 'localhost',
-                             server.port) as client:
-            with pytest.raises(RPCError):
-                await client.send_request('incompatibleversion')
+    async def test_reply_and_disconnect_value(self, server):
+        async with Connector(RPCSession, 'localhost', server.port) as client:
+            value = 42
+            assert await client.send_request('disconnect', [value]) == value
             await sleep(0)
+            assert client.is_closing()
+
+    @pytest.mark.asyncio
+    async def test_reply_and_disconnect_error(self, server):
+        async with Connector(RPCSession, 'localhost', server.port) as client:
+            with pytest.raises(RPCError) as e:
+                assert await client.send_request('disconnect')
+            exc = e.value
+            assert exc.code == 1 and exc.message == 'incompatible version'
             assert client.is_closing()
 
     @pytest.mark.asyncio
@@ -802,12 +812,11 @@ class TestMessageSession(object):
 
     @pytest.mark.asyncio
     async def test_basic_send(self, msg_server):
-        async with Connector(MessageSession, 'localhost',
-                             msg_server.port) as client:
+        async with Connector(MessageSession, 'localhost', msg_server.port) as client:
             server_session = await MessageServer.current_server()
             await client.send_message((b'version', b'abc'))
             # Give the receiving task time to process before closing the connection
-            await sleep(0.001)
+            await sleep(0.01)
         assert server_session.messages == [(b'version', b'abc')]
 
     @pytest.mark.asyncio
@@ -842,7 +851,7 @@ class TestMessageSession(object):
             msg[0] = msg[0] ^ 1
             client.transport.write(msg)
             # Give the receiving task time to process before closing the connection
-            await sleep(0.001)
+            await sleep(0.01)
         assert in_caplog(caplog, 'bad network magic')
 
     @pytest.mark.asyncio
@@ -853,7 +862,7 @@ class TestMessageSession(object):
             msg[-1] = msg[-1] ^ 1
             client.transport.write(msg)
             # Give the receiving task time to process before closing the connection
-            await sleep(0.001)
+            await sleep(0.01)
         assert in_caplog(caplog, 'checksum mismatch')
 
     @pytest.mark.asyncio
@@ -863,13 +872,13 @@ class TestMessageSession(object):
             big = 1024 * 1024
             await client.send_message((b'version', bytes(big)))
             # Give the receiving task time to process before closing the connection
-            await sleep(0.001)
+            await sleep(0.01)
         assert not in_caplog(caplog, 'oversized payload')
         async with Connector(MessageSession, 'localhost',
                              msg_server.port) as client:
             await client.send_message((b'version', bytes(big + 1)))
             # Give the receiving task time to process before closing the connection
-            await sleep(0.001)
+            await sleep(0.01)
         assert in_caplog(caplog, 'oversized payload')
 
     @pytest.mark.asyncio

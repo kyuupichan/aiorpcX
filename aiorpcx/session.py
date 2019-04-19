@@ -25,7 +25,7 @@
 
 
 __all__ = ('Connector', 'RPCSession', 'MessageSession', 'Server', 'ExcessiveSessionCostError',
-           'BatchError', 'Concurrency')
+           'BatchError', 'Concurrency', 'ReplyAndDisconnect')
 
 
 import asyncio
@@ -39,13 +39,20 @@ from aiorpcx.curio import (
     timeout_after, spawn_sync, ignore_after, sleep
 )
 from aiorpcx.framing import (
-    NewlineFramer, BitcoinFramer,
-    BadMagicError, BadChecksumError, OversizedPayloadError
+    NewlineFramer, BitcoinFramer, BadMagicError, BadChecksumError, OversizedPayloadError
 )
 from aiorpcx.jsonrpc import (
-    Request, Batch, Notification, ProtocolError, RPCError, FinalRPCError,
+    Request, Batch, Notification, ProtocolError, RPCError,
     JSONRPC, JSONRPCv2, JSONRPCConnection
 )
+
+
+class ReplyAndDisconnect(Exception):
+    '''Force a session disconnect after sending result (a Python object or an RPCError).
+    '''
+
+    def __init__(self, result):
+        self.result = result
 
 
 class Connector(object):
@@ -562,6 +569,7 @@ class RPCSession(SessionBase):
 
     async def _throttled_request(self, request):
         '''Process a single request, respecting the concurrency limit.'''
+        disconnect = False
         try:
             timeout = self.processing_timeout
             async with timeout_after(timeout):
@@ -574,8 +582,12 @@ class RPCSession(SessionBase):
         except TaskTimeout:
             self.logger.info(f'incoming request {request} timed out after {timeout} secs')
             result = RPCError(JSONRPC.SERVER_BUSY, 'server busy - request timed out')
+        except ReplyAndDisconnect as e:
+            result = e.result
+            disconnect = True
         except ExcessiveSessionCostError:
-            result = FinalRPCError(JSONRPC.EXCESSIVE_RESOURCE_USAGE, 'excessive resource usage')
+            result = RPCError(JSONRPC.EXCESSIVE_RESOURCE_USAGE, 'excessive resource usage')
+            disconnect = True
         except CancelledError:
             raise
         except Exception:
@@ -588,8 +600,8 @@ class RPCSession(SessionBase):
                 await self._send_message(message)
         if isinstance(result, Exception):
             self._bump_errors(result)
-            if isinstance(result, FinalRPCError):
-                await self.close()
+        if disconnect:
+            await self.close()
 
     async def _send_concurrent(self, message, event, request_count):
         async with self._outgoing_concurrency:
