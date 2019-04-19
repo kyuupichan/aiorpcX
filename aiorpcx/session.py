@@ -262,9 +262,11 @@ class SessionBase(asyncio.Protocol):
             self._address = None
             self.transport = None
             self.closed_event.set()
-            self._task.cancel()
             # Release waiting tasks
             self._can_send.set()
+            # Cancelling directly leads to self-cancellation problems for member
+            # functions await-ing self.close()
+            self.loop.call_soon(self._task.cancel)
 
     # External API
     def is_send_buffer_full(self):
@@ -357,8 +359,6 @@ class SessionBase(asyncio.Protocol):
                 await self.closed_event.wait()
             self.abort()
             await self.closed_event.wait()
-            with suppress(CancelledError):
-                await self._task
 
 
 class MessageSession(SessionBase):
