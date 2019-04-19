@@ -257,13 +257,14 @@ class SessionBase(asyncio.Protocol):
         '''Called by asyncio when the connection closes.
 
         Tear down things done in connection_made.'''
-        self._address = None
-        self.transport = None
-        self.closed_event.set()
-        self._task.cancel()
-
-        # Release waiting tasks
-        self._can_send.set()
+        # Work around uvloop bug; see https://github.com/MagicStack/uvloop/issues/246
+        if self.transport:
+            self._address = None
+            self.transport = None
+            self.closed_event.set()
+            self._task.cancel()
+            # Release waiting tasks
+            self._can_send.set()
 
     # External API
     def is_send_buffer_full(self):
