@@ -512,7 +512,23 @@ class FakeServer(asyncio.Protocol):
         self.transport.write(self.response)
 
 
-@pytest.fixture(params=['127.0.0.1', '::1', 'localhost'])
+def localhosts():
+    candidates = ['127.0.0.1', '::1', 'localhost']
+    loop = asyncio.get_event_loop()
+    result = []
+    for host in candidates:
+        coro = loop.create_server(FakeServer, host=host, port=50001)
+        try:
+            server = loop.run_until_complete(coro)
+        except OSError as e:
+            result.append(pytest.param(host, marks=pytest.mark.skip))
+        else:
+            server.close()
+            result.append(host)
+    return result
+
+
+@pytest.fixture(params=localhosts())
 def proxy_address(request, event_loop, unused_tcp_port):
     host = request.param
     coro = event_loop.create_server(FakeServer, host=host, port=unused_tcp_port)
