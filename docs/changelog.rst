@@ -4,6 +4,12 @@ ChangeLog
 .. note:: The aiorpcX API changes regularly and is still unstable
 
 
+Version 0.15.1 (20 Apr 2019)
+----------------------------
+
+* resolve socks proxy host using getaddrinfo.  In particular, IPv6 is supported.
+* add two new APIs
+
 Version 0.15.0 (16 Apr 2019)
 ----------------------------
 
