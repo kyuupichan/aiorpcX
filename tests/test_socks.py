@@ -193,20 +193,9 @@ class TestSOCKS4a(object):
     def bad_first_byte(self):
         return bytes([randrange(1, 256)]) + self.response()[1:]
 
-    def test_good_response(self, addr4, auth):
-        client = SOCKS4a(*addr4, auth)
-        server = FakeResponder(self.response())
-        messages = run_communication(client, server)
-
-        host, port = addr4
-        user_id = b'' if not auth else auth.username.encode()
-        packed = ipaddress.IPv4Address(host).packed
-        data = b''.join((b'\4\1', struct.pack('>H', port),
-                         packed, user_id, b'\0'))
-        assert messages == [data]
-
     def test_good_response(self, addr4a, auth):
         host, port = addr4a
+        host = classify_host(host)
         client = SOCKS4a(host, port, auth)
         server = FakeResponder(self.response())
         messages = run_communication(client, server)
@@ -520,18 +509,22 @@ class FakeServer(asyncio.Protocol):
         self.transport = transport
 
     def data_received(self, data):
-        if self.response:
-            self.transport.write(self.response)
-            self.response = None
+        self.transport.write(self.response)
 
 
-@pytest.fixture(scope='function')
-def proxy_address(event_loop, unused_tcp_port):
-    coro = event_loop.create_server(FakeServer, host='localhost',
-                                    port=unused_tcp_port)
+@pytest.fixture(params=['127.0.0.1', '::1', 'localhost'])
+def proxy_address(request, event_loop, unused_tcp_port):
+    host = request.param
+    coro = event_loop.create_server(FakeServer, host=host, port=unused_tcp_port)
     server = event_loop.run_until_complete(coro)
-    yield ('localhost', unused_tcp_port)
+    yield (host, unused_tcp_port)
     server.close()
+
+
+def local_hosts(host):
+    if host == 'localhost':
+        return ['::1', '127.0.0.1']
+    return [host]
 
 
 class TestSOCKSProxy(object):
@@ -539,14 +532,14 @@ class TestSOCKSProxy(object):
     @pytest.mark.asyncio
     async def test_good_SOCKS5(self, proxy_address, auth):
         chosen_auth = 2 if auth else 0
-        FakeServer.response = TestSOCKS5.response(chosen_auth,
-                                                  'wwww.apple.com')
+        FakeServer.response = TestSOCKS5.response(chosen_auth, 'wwww.apple.com')
         result = await SOCKSProxy.auto_detect_address(proxy_address, auth)
         assert isinstance(result, SOCKSProxy)
         assert result.protocol is SOCKS5
         assert result.address == proxy_address
         assert result.auth == auth
-        assert result.peername == ('127.0.0.1', proxy_address[1])
+        assert result.peername[0] in local_hosts(proxy_address[0])
+        assert result.peername[1] == proxy_address[1]
 
     @pytest.mark.asyncio
     async def test_good_SOCKS4a(self, proxy_address, auth):
@@ -557,7 +550,8 @@ class TestSOCKSProxy(object):
         assert result.protocol is SOCKS4a
         assert result.address == proxy_address
         assert result.auth == auth
-        assert result.peername == ('127.0.0.1', proxy_address[1])
+        assert result.peername[0] in local_hosts(proxy_address[0])
+        assert result.peername[1] == proxy_address[1]
 
     @pytest.mark.asyncio
     async def test_good_SOCKS4(self, proxy_address, auth):
@@ -569,7 +563,8 @@ class TestSOCKSProxy(object):
         assert result.protocol is SOCKS4a
         assert result.address == proxy_address
         assert result.auth == auth
-        assert result.peername == ('127.0.0.1', proxy_address[1])
+        assert result.peername[0] in local_hosts(proxy_address[0])
+        assert result.peername[1] == proxy_address[1]
 
     @pytest.mark.asyncio
     async def test_auto_detect_address_failure(self):
@@ -585,21 +580,20 @@ class TestSOCKSProxy(object):
     async def test_autodetect_host_success(self, proxy_address, auth):
         host, port = proxy_address
         chosen_auth = 2 if auth else 0
-        FakeServer.response = TestSOCKS5.response(chosen_auth,
-                                                  'wwww.apple.com')
+        FakeServer.response = TestSOCKS5.response(chosen_auth, 'wwww.apple.com')
         result = await SOCKSProxy.auto_detect_host(host, [port], auth)
         assert isinstance(result, SOCKSProxy)
         assert result.protocol is SOCKS5
         assert result.address == proxy_address
         assert result.auth == auth
-        assert result.peername == ('127.0.0.1', port)
+        assert result.peername[0] in local_hosts(host)
+        assert result.peername[1] == port
 
     @pytest.mark.asyncio
     async def test_autodetect_host_failure(self, auth):
         ports = [1, 2]
         chosen_auth = 2 if auth else 0
-        FakeServer.response = TestSOCKS5.response(chosen_auth,
-                                                  'wwww.apple.com')
+        FakeServer.response = TestSOCKS5.response(chosen_auth, 'wwww.apple.com')
         result = await SOCKSProxy.auto_detect_host('localhost', ports, auth)
         assert result is None
 
@@ -613,15 +607,17 @@ class TestSOCKSProxy(object):
     @pytest.mark.asyncio
     async def test_create_connection_good(self, proxy_address, auth):
         chosen_auth = 2 if auth else 0
-        FakeServer.response = TestSOCKS5.response(chosen_auth,
-                                                  'wwww.apple.com')
+        FakeServer.response = TestSOCKS5.response(chosen_auth, 'wwww.apple.com')
         proxy = SOCKSProxy(proxy_address, SOCKS5, auth)
         _, protocol = await proxy.create_connection(RPCSession, *GCOM)
-        assert protocol._address == GCOM
-        assert protocol._proxy_address == proxy.peername
-        assert proxy.peername == ('127.0.0.1', proxy_address[1])
-        assert isinstance(protocol, RPCSession)
-        await protocol.close()
+        try:
+            assert protocol._address == GCOM
+            assert protocol._proxy_address == proxy.peername
+            assert proxy.peername[0] in local_hosts(proxy_address[0])
+            assert proxy.peername[1] == proxy_address[1]
+            assert isinstance(protocol, RPCSession)
+        finally:
+            await protocol.close()
 
     @pytest.mark.asyncio
     async def test_create_connection_resolve_good(self, proxy_address, auth):
@@ -631,11 +627,14 @@ class TestSOCKSProxy(object):
                                                   'wwww.apple.com')
         _, protocol = await proxy.create_connection(RPCSession, *GCOM,
                                                     resolve=True)
-        assert protocol._address[0] not in (None, GCOM[0])
-        assert protocol._address[1] == GCOM[1]
-        assert proxy.peername == ('127.0.0.1', proxy_address[1])
-        assert isinstance(protocol, RPCSession)
-        await protocol.close()
+        try:
+            assert protocol._address[0] not in (None, GCOM[0])
+            assert protocol._address[1] == GCOM[1]
+            assert proxy.peername[0] in local_hosts(proxy_address[0])
+            assert proxy.peername[1] == proxy_address[1]
+            assert isinstance(protocol, RPCSession)
+        finally:
+            await protocol.close()
 
     @pytest.mark.asyncio
     async def test_create_connection_resolve_bad(self, proxy_address, auth):

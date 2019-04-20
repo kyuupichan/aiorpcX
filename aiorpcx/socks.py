@@ -27,10 +27,12 @@
 
 import asyncio
 import collections
-import ipaddress
+from ipaddress import IPv4Address, IPv6Address
 import socket
 import struct
 from functools import partial
+
+from .util import classify_host
 
 
 __all__ = ('SOCKSUserAuth', 'SOCKS4', 'SOCKS4a', 'SOCKS5', 'SOCKSProxy',
@@ -58,6 +60,7 @@ class NeedData(Exception):
 
 
 class SOCKSBase(object):
+    '''Stateful as written so good for a single connection only.'''
 
     @classmethod
     def name(cls):
@@ -102,18 +105,15 @@ class SOCKS4(SOCKSBase):
 
     @classmethod
     def _check_host(cls, host):
-        if not isinstance(host, ipaddress.IPv4Address):
-            try:
-                host = ipaddress.IPv4Address(host)
-            except ValueError:
-                raise SOCKSProtocolError(
-                    f'SOCKS4 requires an IPv4 address: {host}') from None
-        return host
+        result = classify_host(host)
+        if not isinstance(result, IPv4Address):
+            raise SOCKSProtocolError(f'SOCKS4 requires an IPv4 address: {host}')
+        return result
 
     def _start(self):
         self._state = self._first_response
 
-        if isinstance(self._dst_host, ipaddress.IPv4Address):
+        if isinstance(self._dst_host, IPv4Address):
             # SOCKS4
             dst_ip_packed = self._dst_host.packed
             host_bytes = b''
@@ -151,10 +151,10 @@ class SOCKS4a(SOCKS4):
 
     @classmethod
     def _check_host(cls, host):
-        if not isinstance(host, (str, ipaddress.IPv4Address)):
-            raise SOCKSProtocolError(
-                f'SOCKS4a requires an IPv4 address or host name: {host}')
-        return host
+        result = classify_host(host)
+        if not isinstance(result, (str, IPv4Address)):
+            raise SOCKSProtocolError(f'SOCKS4a requires an IPv4 address or host name: {host}')
+        return result
 
 
 class SOCKS5(SOCKSBase):
@@ -178,9 +178,9 @@ class SOCKS5(SOCKSBase):
         self._auth_bytes, self._auth_methods = self._authentication(auth)
 
     def _destination_bytes(self, host, port):
-        if isinstance(host, ipaddress.IPv4Address):
+        if isinstance(host, IPv4Address):
             addr_bytes = b'\1' + host.packed
-        elif isinstance(host, ipaddress.IPv6Address):
+        elif isinstance(host, IPv6Address):
             addr_bytes = b'\4' + host.packed
         elif isinstance(host, str):
             host = host.encode()
@@ -309,20 +309,25 @@ class SOCKSProxy(object):
 
         Return the open socket on success, or the exception on failure.
         '''
-        client = self.protocol(host, port, self.auth)
-        sock = socket.socket()
         loop = asyncio.get_event_loop()
-        try:
-            # A non-blocking socket is required by loop socket methods
-            sock.setblocking(False)
-            await loop.sock_connect(sock, self.address)
-            await self._handshake(client, sock, loop)
-            self.peername = sock.getpeername()
-            return sock
-        except Exception as e:
-            # Don't close - see https://github.com/kyuupichan/aiorpcX/issues/8
-            # sock.close()
-            return e
+
+        proxy_host, proxy_port = self.address[:2]
+        for info in await loop.getaddrinfo(proxy_host, proxy_port, type=socket.SOCK_STREAM):
+            # This object has state so is only good for one connection
+            client = self.protocol(host, port, self.auth)
+            sock = socket.socket(family=info[0])
+            try:
+                # A non-blocking socket is required by loop socket methods
+                sock.setblocking(False)
+                await loop.sock_connect(sock, info[4])
+                await self._handshake(client, sock, loop)
+                self.peername = sock.getpeername()
+                return sock
+            except (OSError, SOCKSProtocolError) as e:
+                exception = e
+                # Don't close the socket because of an asyncio bug
+                # see https://github.com/kyuupichan/aiorpcX/issues/8
+        return exception
 
     async def _connect(self, addresses):
         '''Connect to the proxy and perform a handshake requesting a
@@ -351,7 +356,7 @@ class SOCKSProxy(object):
         if self.protocol is SOCKS4a:
             host, port = 'www.apple.com', 80
         else:
-            host, port = ipaddress.IPv4Address('8.8.8.8'), 53
+            host, port = IPv4Address('8.8.8.8'), 53
 
         sock = await self._connect_one(host, port)
         if isinstance(sock, socket.socket):
@@ -364,13 +369,12 @@ class SOCKSProxy(object):
 
     @classmethod
     async def auto_detect_address(cls, address, auth):
-        '''Try to detect a SOCKS proxy at address using the authentication
-        method (or None).  SOCKS5, SOCKS4a and SOCKS are tried in
-        order.  If a SOCKS proxy is detected a SOCKSProxy object is
-        returned.
+        '''Try to detect a SOCKS proxy at address using the authentication method (or None).
+        SOCKS5, SOCKS4a and SOCKS are tried in order.  If a SOCKS proxy is detected a
+        SOCKSProxy object is returned.
 
-        Returning a SOCKSProxy does not mean it is functioning - for
-        example, it may have no network connectivity.
+        Returning a SOCKSProxy does not mean it is functioning - for example, it may have
+        no network connectivity.
 
         If no proxy is detected return None.
         '''
@@ -384,12 +388,8 @@ class SOCKSProxy(object):
     async def auto_detect_host(cls, host, ports, auth):
         '''Try to detect a SOCKS proxy on a host on one of the ports.
 
-        Calls auto_detect for the ports in order.  Returns SOCKS are
-        tried in order; a SOCKSProxy object for the first detected
-        proxy is returned.
-
-        Returning a SOCKSProxy does not mean it is functioning - for
-        example, it may have no network connectivity.
+        Calls auto_detect_address for the ports in order.  Returning a SOCKSProxy does not
+        mean it is functioning - for example, it may have no network connectivity.
 
         If no proxy is detected return None.
         '''
