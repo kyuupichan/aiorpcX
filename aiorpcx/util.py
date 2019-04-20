@@ -23,13 +23,16 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-__all__ = ('instantiate_coroutine', )
+__all__ = ('instantiate_coroutine', 'is_valid_hostname', 'classify_host')
 
 
 import asyncio
 from collections import namedtuple
 from functools import partial
 import inspect
+from ipaddress import ip_address, IPv4Address, IPv6Address
+import re
+from socket import AF_INET, AF_INET6
 
 
 def instantiate_coroutine(corofunc, args):
@@ -91,3 +94,42 @@ def check_task(logger, task):
             task.result()
         except Exception:
             logger.error('task crashed: %r', task, exc_info=True)
+
+
+# See http://stackoverflow.com/questions/2532053/validate-a-hostname-string
+# Note underscores are valid in domain names, but strictly invalid in host
+# names.  We ignore that distinction.
+LABEL_REGEX = re.compile('^[a-z0-9_]([a-z0-9-_]{0,61}[a-z0-9_])?$', re.IGNORECASE)
+NUMERIC_REGEX = re.compile('[0-9]+$')
+
+def is_valid_hostname(hostname):
+    '''Return True if hostname is valid, otherwise False.'''
+    if not isinstance(hostname, str):
+        raise TypeError('hostname must be a string')
+    # strip exactly one dot from the right, if present
+    if hostname and hostname[-1] == ".":
+        hostname = hostname[:-1]
+    if not hostname or len(hostname) > 253:
+        return False
+    labels = hostname.split('.')
+    # the TLD must be not all-numeric
+    if re.match(NUMERIC_REGEX, labels[-1]):
+        return False
+    return all(LABEL_REGEX.match(label) for label in labels)
+
+
+def classify_host(host):
+    '''Host is an IPv4Address, IPv6Address or a string.
+
+    If an IPv4Address or IPv6Address return it.  Otherwise convert the string to an
+    IPv4Address or IPv6Address object if possible and return it.  Otherwise return the
+    original string if it is a valid hostname.
+
+    Raise ValueError if a string cannot be interpreted as an IP address and it is not
+    a valid hostname.
+    '''
+    if isinstance(host, (IPv4Address, IPv6Address)):
+        return host
+    if is_valid_hostname(host):
+        return host
+    return ip_address(host)
