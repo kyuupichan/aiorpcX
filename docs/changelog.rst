@@ -4,16 +4,24 @@ ChangeLog
 .. note:: The aiorpcX API changes regularly and is still unstable
 
 
+Version 0.16.1 (20 Apr 2019)
+----------------------------
+
+* resolve socks proxy host using getaddrinfo.  In particular, IPv6 is supported.
+* add two new APIs
+
 Version 0.16.0 (19 Apr 2019)
 ----------------------------
 
 * session closing is now robust; it is safe to await session.close() from anywhere
 * API change: FinalRPCError removed; raise ReplyAndDisconnect instead.  This responds with
-  a normal result, or an error, and then disconnects.
-  e.g.  raise ReplyAndDisconnect(23)
-        raise ReplyAndDisconnect(RPCError(1, "message"))
+  a normal result, or an error, and then disconnects.  e.g.::
+
+    raise ReplyAndDisconnect(23)
+    raise ReplyAndDisconnect(RPCError(1, "message"))
+
 * the session base class' private method _close() is removed.  Use await close() instead.
-* workaround uvloop bug `https://github.com/MagicStack/uvloop/issues/246`_
+* workaround uvloop bug `<https://github.com/MagicStack/uvloop/issues/246>`_
 
 Version 0.15.0 (16 Apr 2019)
 ----------------------------
