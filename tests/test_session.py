@@ -133,18 +133,17 @@ class TestServer:
 class TestRPCSession:
 
     @pytest.mark.asyncio
-    async def test_proxy(self, server):
-        proxy = SOCKSProxy(('localhost', 79), SOCKS5, None)
+    async def test_no_proxy(self, server):
+        proxy = SOCKSProxy('localhost:79', SOCKS5, None)
         with pytest.raises(OSError):
-            async with Connector(RPCSession, 'localhost', server.port,
-                                 proxy=proxy) as session:
+            async with Connector(RPCSession, 'localhost', server.port, proxy=proxy) as session:
                 pass
 
     @pytest.mark.asyncio
     async def test_handlers(self, server):
         async with timeout_after(0.1):
-            async with Connector(RPCSession, 'localhost',
-                                 server.port) as client:
+            async with Connector(RPCSession, 'localhost', server.port) as client:
+                assert client.proxy() is None
                 with raises_method_not_found('something'):
                     await client.send_request('something')
                 await client.send_notification('something')
@@ -253,6 +252,14 @@ class TestRPCSession:
         assert not client.transport
 
     @pytest.mark.asyncio
+    async def test_force_close_abort_codepath(self, server):
+        async with Connector(RPCSession, 'localhost', server.port) as client:
+            assert not client.closed_event.is_set()
+            await client.close(force_after=0)
+        assert client.closed_event.is_set()
+        assert not client.transport
+
+    @pytest.mark.asyncio
     async def test_verbose_logging(self, server, caplog):
         async with Connector(RPCSession, 'localhost', server.port) as client:
             client.verbosity = 4
@@ -275,24 +282,6 @@ class TestRPCSession:
             await sleep(0)
             assert len(caplog.records) == 1
             assert in_caplog(caplog, 'dropping message over 5 bytes')
-
-    @pytest.mark.asyncio
-    async def test_peer_address(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
-            pa = client.peer_address()
-            if pa[0] == '::1':
-                assert client.peer_address_str() == f'[::1]:{server.port}'
-                assert pa[1:] == (server.port, 0, 0)
-            else:
-                assert pa[0].startswith('127.')
-                assert pa[1:] == (server.port, )
-                assert client.peer_address_str() == f'{pa[0]}:{server.port}'
-            client._address = None
-            assert client.peer_address_str() == 'unknown'
-            client._address = '1.2.3.4', 56
-            assert client.peer_address_str() == '1.2.3.4:56'
-            client._address = '::1', 56, 0, 0
-            assert client.peer_address_str() == '[::1]:56'
 
     @pytest.mark.asyncio
     async def test_resource_release(self, server):
@@ -883,10 +872,9 @@ class TestMessageSession(object):
 
     @pytest.mark.asyncio
     async def test_proxy(self, msg_server):
-        proxy = SOCKSProxy(('localhost', 79), SOCKS5, None)
+        proxy = SOCKSProxy('localhost:79', SOCKS5, None)
         with pytest.raises(OSError):
-            async with Connector(MessageSession, 'localhost',
-                                 msg_server.port, proxy=proxy):
+            async with Connector(MessageSession, 'localhost', msg_server.port, proxy=proxy):
                 pass
 
     @pytest.mark.asyncio

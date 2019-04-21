@@ -45,6 +45,7 @@ from aiorpcx.jsonrpc import (
     Request, Batch, Notification, ProtocolError, RPCError,
     JSONRPC, JSONRPCv2, JSONRPCConnection
 )
+from aiorpcx.util import NetAddress
 
 
 class ReplyAndDisconnect(Exception):
@@ -159,8 +160,8 @@ class SessionBase(asyncio.Protocol):
         self.transport = None
         self.closed_event = self.event()
         # Set when a connection is made
-        self._address = None
-        self._proxy_address = None
+        self._proxy = None
+        self._remote_address = None
         # For logger.debug messsages
         self.verbosity = 0
         # Cleared when the send socket is full
@@ -245,15 +246,12 @@ class SessionBase(asyncio.Protocol):
 
         Derived classes overriding this method must call this first.'''
         self.transport = transport
-        # This would throw if called on a closed SSL transport.  Fixed
-        # in asyncio in Python 3.6.1 and 3.5.4
-        peer_address = transport.get_extra_info('peername')
-        # If the Socks proxy was used then _address is already set to
-        # the remote address
-        if self._address:
-            self._proxy_address = peer_address
-        else:
-            self._address = peer_address
+        # If the Socks proxy was used then _proxy and _remote_address are already set
+        if self._proxy is None:
+            # This would throw if called on a closed SSL transport.  Fixed in asyncio in
+            # Python 3.6.1 and 3.5.4
+            peername = transport.get_extra_info('peername')
+            self._remote_address = NetAddress(peername[0], peername[1])
         self._task = spawn_sync(self._process_messages(), loop=self.loop)
 
     def connection_lost(self, exc):
@@ -262,7 +260,6 @@ class SessionBase(asyncio.Protocol):
         Tear down things done in connection_made.'''
         # Work around uvloop bug; see https://github.com/MagicStack/uvloop/issues/246
         if self.transport:
-            self._address = None
             self.transport = None
             self.closed_event.set()
             # Release waiting tasks
@@ -322,25 +319,13 @@ class SessionBase(asyncio.Protocol):
         '''Return a default framer.'''
         raise NotImplementedError
 
-    def peer_address(self):
-        '''Returns the peer's address (Python networking address), or None if
-        no connection or an error.
+    def proxy(self):
+        '''Returns the proxy used, or None.'''
+        return self._proxy
 
-        This is the result of socket.getpeername() when the connection
-        was made.
-        '''
-        return self._address
-
-    def peer_address_str(self):
-        '''Returns the peer's IP address and port as a human-readable
-        string.'''
-        if not self._address:
-            return 'unknown'
-        ip_addr_str, port = self._address[:2]
-        if ':' in ip_addr_str:
-            return f'[{ip_addr_str}]:{port}'
-        else:
-            return f'{ip_addr_str}:{port}'
+    def remote_address(self):
+        '''Returns a NetAddress or None if not connected.'''
+        return self._remote_address
 
     def is_closing(self):
         '''Return True if the connection is closing.'''

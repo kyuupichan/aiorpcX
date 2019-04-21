@@ -295,7 +295,9 @@ async def test_tg_closed():
     task = await spawn(return_value(3))
     for wait in (all, any, object):
         t = TaskGroup()
+        assert not t.closed()
         await t.join()
+        assert t.closed()
         with pytest.raises(RuntimeError):
             await t.spawn(my_raises, ImportError)
         with pytest.raises(RuntimeError):

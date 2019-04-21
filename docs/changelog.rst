@@ -4,6 +4,16 @@ ChangeLog
 .. note:: The aiorpcX API changes regularly and is still unstable
 
 
+Version 0.17.0 (22 Apr 2020)
+----------------------------
+
+* Add some new APIs, update others
+* Add Service, NetAddress, ServicePart, validate_port, validate_protocol
+* SessionBase: new API proxy() and remote_address().  Remove peer_address()
+  and peer_address_str()
+* SOCKSProxy: auto_detect_address(), auto_detect_host() renamed auto_detect_at_address()
+  and auto_detect_at_host().  auto_detect_at_address() takes a NetAddress.
+
 Version 0.16.2 (21 Apr 2019)
 ----------------------------
 
