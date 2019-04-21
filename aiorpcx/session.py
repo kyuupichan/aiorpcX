@@ -359,7 +359,7 @@ class SessionBase(asyncio.Protocol):
         if self.transport:
             self.transport.close()
             try:
-                async with ignore_after(force_after):
+                async with timeout_after(force_after):
                     await self.closed_event.wait()
             except TaskTimeout:
                 self.abort()
