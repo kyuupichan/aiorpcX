@@ -4,6 +4,11 @@ ChangeLog
 .. note:: The aiorpcX API changes regularly and is still unstable
 
 
+Version 0.16.2 (21 Apr 2019)
+----------------------------
+
+* fix force-close bug
+
 Version 0.16.1 (20 Apr 2019)
 ----------------------------
 
