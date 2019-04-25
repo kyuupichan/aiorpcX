@@ -527,7 +527,7 @@ class RPCSession(SessionBase):
             self._outgoing_concurrency.set_target(target)
 
     async def _receive_messages(self):
-        while not self.is_closing():
+        while True:
             try:
                 message = await self.framer.receive_message()
             except MemoryError as e:
@@ -559,6 +559,8 @@ class RPCSession(SessionBase):
             timeout = self.processing_timeout
             async with timeout_after(timeout):
                 async with self._incoming_concurrency:
+                    if self.is_closing():
+                        return
                     if self._cost_fraction:
                         await sleep(self._cost_fraction * self.cost_sleep)
                     result = await self.handle_request(request)
