@@ -67,8 +67,6 @@ class Connector(object):
         self.protocol = None
         self.loop = kwargs.get('loop', asyncio.get_event_loop())
         self.kwargs = kwargs
-        # By default, do not limit outgoing connections
-        self.cost_hard_limit = 0
 
     async def create_connection(self):
         '''Initiate a connection.'''
@@ -78,6 +76,8 @@ class Connector(object):
 
     async def __aenter__(self):
         _transport, self.protocol = await self.create_connection()
+        # By default, do not limit outgoing connections
+        self.protocol.cost_hard_limit = 0
         return self.protocol
 
     async def __aexit__(self, exc_type, exc_value, traceback):
