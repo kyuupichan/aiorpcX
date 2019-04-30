@@ -598,9 +598,6 @@ class TestRPCSession:
 
 class RPCClient(RPCSession):
     # For tests of wire messages
-    def connection_made(self, transport):
-        self.transport = transport
-
     async def send(self, item):
         if not isinstance(item, str):
             item = json.dumps(item)

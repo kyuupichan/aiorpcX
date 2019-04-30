@@ -261,12 +261,12 @@ class SessionBase(asyncio.Protocol):
         # Work around uvloop bug; see https://github.com/MagicStack/uvloop/issues/246
         if self.transport:
             self.transport = None
-            self.closed_event.set()
             # Release waiting tasks
             self._can_send.set()
             # Cancelling directly leads to self-cancellation problems for member
             # functions await-ing self.close()
             self.loop.call_soon(self._task.cancel)
+            self.closed_event.set()
 
     # External API
     def is_send_buffer_full(self):
@@ -349,6 +349,7 @@ class SessionBase(asyncio.Protocol):
             except TaskTimeout:
                 self.abort()
                 await self.closed_event.wait()
+            await sleep(0)
 
 
 class MessageSession(SessionBase):

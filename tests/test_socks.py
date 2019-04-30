@@ -552,8 +552,9 @@ class TestSOCKSProxy(object):
 
     @pytest.mark.asyncio
     async def test_auto_detect_at_address_failure(self):
-        result = await SOCKSProxy.auto_detect_at_address('8.8.8.8:53', None)
-        assert result is None
+        async with ignore_after(1.0):
+            result = await SOCKSProxy.auto_detect_at_address('8.8.8.8:53', None)
+            assert result is None
 
     @pytest.mark.asyncio
     async def test_auto_detect_at_address_cannot_connect(self):
