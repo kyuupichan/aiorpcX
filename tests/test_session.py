@@ -356,6 +356,8 @@ class TestRPCSession:
         async with Connector(RPCSession, 'localhost', server.port) as client:
             # Prevent this interfering
             client.cost_decay_per_sec = 0
+            # Outgoing sessions by default have no cost limits
+            client.cost_hard_limit = RPCSession.cost_hard_limit
             # Test usage below soft limit
             client.cost = client.cost_soft_limit - 10
             client.recalc_concurrency()
@@ -383,6 +385,22 @@ class TestRPCSession:
                     pass
 
     @pytest.mark.asyncio
+    async def test_concurrency_no_limit_for_outgoing(self, server):
+        async with Connector(RPCSession, 'localhost', server.port) as client:
+            # Prevent this interfering
+            client.cost_decay_per_sec = 0
+            # Test usage half-way
+            client.cost = (RPCSession.cost_soft_limit + RPCSession.cost_hard_limit) // 2
+            client.recalc_concurrency()
+            assert client._incoming_concurrency.max_concurrent == client.initial_concurrent
+            assert client._cost_fraction == 0
+            # Test above hard limit does not disconnect
+            client.cost = RPCSession.cost_hard_limit + 1
+            client.recalc_concurrency()
+            async with client._incoming_concurrency:
+                pass
+
+    @pytest.mark.asyncio
     async def test_concurrency_decay(self, server):
         async with Connector(RPCSession, 'localhost', server.port) as client:
             client.cost_decay_per_sec = 100
@@ -402,6 +420,8 @@ class TestRPCSession:
     @pytest.mark.asyncio
     async def test_extra_cost(self, server):
         async with Connector(RPCSession, 'localhost', server.port) as client:
+            # Outgoing sessions by default have no cost limits
+            client.cost_hard_limit = RPCSession.cost_hard_limit
             client.extra_cost = lambda: client.cost_soft_limit + 1
             client.recalc_concurrency()
             assert 1 > client._cost_fraction > 0
