@@ -32,7 +32,7 @@ import socket
 import struct
 from functools import partial
 
-from .util import NetAddress
+from aiorpcx.util import NetAddress
 
 
 __all__ = ('SOCKSUserAuth', 'SOCKS4', 'SOCKS4a', 'SOCKS5', 'SOCKSProxy',

@@ -26,24 +26,21 @@ def raises_method_not_found(message):
 
 class MyServerSession(RPCSession):
 
-    _current_server = None
+    sessions = []
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.notifications = []
+        self.sessions.append(self)
 
     @classmethod
     async def current_server(self):
         await sleep(0)
-        return self._current_server
+        return self.sessions[0]
 
-    def connection_made(self, transport):
-        MyServerSession._current_server = self
-        super().connection_made(transport)
-
-    def connection_lost(self, exc):
-        MyServerSession._current_server = None
-        super().connection_lost(exc)
+    def connection_lost(self):
+        super().connection_lost()
+        self.sessions.remove(self)
 
     async def handle_request(self, request):
         handler = getattr(self, f'on_{request.method}', None)
@@ -92,42 +89,19 @@ def use_uvloop(request):
 
 
 @pytest.fixture
-def server(event_loop, unused_tcp_port):
-    port = unused_tcp_port
-    server = Server(MyServerSession, 'localhost', port, loop=event_loop)
-    event_loop.run_until_complete(server.listen())
+def server(unused_tcp_port, event_loop):
+    coro = serve_rs(MyServerSession, 'localhost', unused_tcp_port, loop=event_loop)
+    server = event_loop.run_until_complete(coro)
     yield server
-    event_loop.run_until_complete(server.close())
-    event_loop.run_until_complete(sleep(0))
-
-
-class TestServer:
-
-    def test_constructor_loop(self, event_loop):
-        loop = asyncio.get_event_loop()
-        assert loop != event_loop
-        s = Server(None)
-        assert s.loop == loop
-        s = Server(None, loop=None)
-        assert s.loop == loop
-        s = Server(None, loop=event_loop)
-        assert s.loop == event_loop
-
-    @pytest.mark.asyncio
-    async def test_close_not_listening(self, event_loop):
-        server = Server(None, loop=event_loop)
-        assert server.server is None
-        # Return immediately - the server isn't listening
+    if hasattr(asyncio, 'all_tasks'):
+        tasks = asyncio.all_tasks(event_loop)
+    else:
+        tasks = asyncio.Task.all_tasks(loop=event_loop)
+    async def close_all():
         await server.close()
-
-    @pytest.mark.asyncio
-    async def test_close_listening(self, server):
-        asyncio_server = server.server
-        assert asyncio_server is not None
-        assert asyncio_server.sockets
-        await server.close()
-        assert server.server is None
-        assert not asyncio_server.sockets
+        if tasks:
+            await asyncio.wait(tasks)
+    event_loop.run_until_complete(close_all())
 
 
 class TestRPCSession:
@@ -136,149 +110,149 @@ class TestRPCSession:
     async def test_no_proxy(self, server):
         proxy = SOCKSProxy('localhost:79', SOCKS5, None)
         with pytest.raises(OSError):
-            async with Connector(RPCSession, 'localhost', server.port, proxy=proxy) as session:
+            async with connect_rs('localhost', server.port, proxy=proxy) as session:
                 pass
 
     @pytest.mark.asyncio
     async def test_handlers(self, server):
         async with timeout_after(0.1):
-            async with Connector(RPCSession, 'localhost', server.port) as client:
-                assert client.proxy() is None
+            async with connect_rs('localhost', server.port) as session:
+                assert session.proxy() is None
                 with raises_method_not_found('something'):
-                    await client.send_request('something')
-                await client.send_notification('something')
-        assert client.is_closing()
+                    await session.send_request('something')
+                await session.send_notification('something')
+        assert session.is_closing()
 
     @pytest.mark.asyncio
     async def test_send_request(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
-            assert await client.send_request('echo', [23]) == 23
-        assert client.closed_event.is_set()
+        async with connect_rs('localhost', server.port) as session:
+            assert await session.send_request('echo', [23]) == 23
+        assert session.transport._closed_event.is_set()
+        await sleep(0.01)
+        assert session._task.done()
 
     @pytest.mark.asyncio
     async def test_send_request_buggy_handler(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
-            with RaiseTest(JSONRPC.INTERNAL_ERROR, 'internal server error',
-                           RPCError):
-                await client.send_request('bug')
+        async with connect_rs('localhost', server.port) as session:
+            with RaiseTest(JSONRPC.INTERNAL_ERROR, 'internal server error', RPCError):
+                await session.send_request('bug')
 
     @pytest.mark.asyncio
     async def test_unexpected_response(self, server, caplog):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             # A request not a notification so we don't exit immediately
             response = {"jsonrpc": "2.0", "result": 2, "id": -1}
             with caplog.at_level(logging.DEBUG):
-                await client.send_request('send_bad_response', (response, ))
+                await session.send_request('send_bad_response', (response, ))
         assert in_caplog(caplog, 'unsent request')
 
     @pytest.mark.asyncio
     async def test_unanswered_request_count(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             server_session = await MyServerSession.current_server()
             # Wait for the loop to start the message processing task, sigh
             await sleep(0)
-            assert client.unanswered_request_count() == 0
+            assert session.unanswered_request_count() == 0
             assert server_session.unanswered_request_count() == 0
             async with ignore_after(0.01):
-                await client.send_request('sleepy')
-            assert client.unanswered_request_count() == 0
+                await session.send_request('sleepy')
+            assert session.unanswered_request_count() == 0
             assert server_session.unanswered_request_count() == 1
 
     @pytest.mark.asyncio
     async def test_send_request_bad_args(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             # ProtocolError as it's a protocol violation
             with RaiseTest(JSONRPC.INVALID_ARGS, 'list', ProtocolError):
-                await client.send_request('echo', "23")
+                await session.send_request('echo', "23")
 
     @pytest.mark.asyncio
     async def test_send_request_timeout0(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             with pytest.raises(TaskTimeout):
                 async with timeout_after(0):
-                    await client.send_request('echo', [23])
+                    await session.send_request('echo', [23])
 
     @pytest.mark.asyncio
     async def test_send_request_timeout(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             server_session = await MyServerSession.current_server()
             with pytest.raises(TaskTimeout):
                 async with timeout_after(0.01):
-                    await client.send_request('sleepy')
+                    await session.send_request('sleepy')
         # Assert the server doesn't treat cancellation as an error
         assert server_session.errors == 0
 
     @pytest.mark.asyncio
     async def test_error_base_cost(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             server_session = await MyServerSession.current_server()
             server_session.error_base_cost = server_session.cost_hard_limit * 1.1
-            await client._send_message(b'')
+            await session._send_message(b'')
             await sleep(0.01)
             assert server_session.errors == 1
             assert server_session.cost > server_session.cost_hard_limit
             # Check next request raises and cuts us off
             with pytest.raises(RPCError):
-                await client.send_request('echo', [23])
-            assert client.is_closing()
+                await session.send_request('echo', [23])
+            assert session.is_closing()
 
     @pytest.mark.asyncio
     async def test_RPCError_cost(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             server_session = await MyServerSession.current_server()
             err = RPCError(0, 'message')
             assert err.cost == 0
             with pytest.raises(RPCError):
-                await client.send_request('costly_error', [1000])
+                await session.send_request('costly_error', [1000])
             # It can trigger a cost recalc which refunds a tad
             epsilon = 0.1
             assert server_session.cost > server_session.error_base_cost + 1000 - epsilon
 
     @pytest.mark.asyncio
     async def test_send_notification(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             server = await MyServerSession.current_server()
-            await client.send_notification('notify', ['test'])
+            await session.send_notification('notify', ['test'])
             # Ensure we've given the server loop time to process the message
             await asyncio.sleep(0.01)
         assert server.notifications == ['test']
 
     @pytest.mark.asyncio
     async def test_force_close(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
-            assert not client.closed_event.is_set()
-            await client.close(force_after=0.001)
-        assert client.closed_event.is_set()
-        assert not client.transport
+        async with connect_rs('localhost', server.port) as session:
+            assert not session.transport._closed_event.is_set()
+            await session.close(force_after=0.001)
+        assert session.transport._closed_event.is_set()
 
     @pytest.mark.asyncio
     async def test_force_close_abort_codepath(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
-            assert not client.closed_event.is_set()
-            await client.close(force_after=0)
-        assert client.closed_event.is_set()
-        assert not client.transport
+        async with connect_rs('localhost', server.port) as session:
+            protocol = session.transport
+            assert not protocol._closed_event.is_set()
+            await session.close(force_after=0)
+        assert protocol._closed_event.is_set()
 
     @pytest.mark.asyncio
     async def test_verbose_logging(self, server, caplog):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
-            client.verbosity = 4
+        async with connect_rs('localhost', server.port) as session:
+            session.verbosity = 4
             with caplog.at_level(logging.DEBUG):
-                await client.send_request('echo', ['wait'])
+                await session.send_request('echo', ['wait'])
             assert in_caplog(caplog, "Sending framed message b'{")
             assert in_caplog(caplog, "Received framed message b'{")
 
     @pytest.mark.asyncio
     async def test_framer_MemoryError(self, server, caplog):
         factory = partial(RPCSession, framer=NewlineFramer(5))
-        async with Connector(factory, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port, session_factory=factory) as session:
             msg = 'w' * 50
             raw_msg = msg.encode()
             # Even though long it will be sent in one bit
-            request = client.send_request('echo', [msg])
+            request = session.send_request('echo', [msg])
             assert await request == msg
             assert not caplog.records
-            client.data_received(raw_msg)  # Unframed; no \n
+            session.data_received(raw_msg)  # Unframed; no \n
             await sleep(0)
             assert len(caplog.records) == 1
             assert in_caplog(caplog, 'dropping message over 5 bytes')
@@ -288,13 +262,13 @@ class TestRPCSession:
         loop = asyncio.get_event_loop()
         tasks = all_tasks(loop)
         try:
-            client = Connector(RPCSession, 'localhost', 0)
-            await client.create_connection()
+            session = connect_rs('localhost', 0)
+            await session.create_connection()
         except OSError:
             pass
         assert all_tasks(loop) == tasks
 
-        async with Connector(RPCSession, 'localhost', server.port):
+        async with connect_rs('localhost', server.port):
             pass
 
         await asyncio.sleep(0.01)   # Let things be processed
@@ -308,80 +282,82 @@ class TestRPCSession:
         def my_write(data):
             called.append(data)
             if len(called) == limit:
-                client.pause_writing()
+                session.transport.pause_writing()
 
-        async with Connector(RPCSession, 'localhost', server.port) as client:
-            assert not client.is_send_buffer_full()
+        async with connect_rs('localhost', server.port) as session:
+            protocol = session.transport
+            assert protocol._can_send.is_set()
             try:
-                client.transport.write = my_write
+                protocol.transport.write = my_write
             except AttributeError:    # uvloop: transport.write is read-only
                 return
-            await client._send_message(b'a')
-            assert not client.is_send_buffer_full()
+            await session._send_message(b'a')
+            assert protocol._can_send.is_set()
             assert called
             called.clear()
 
             async def monitor():
                 await sleep(0.002)
                 assert called == [b'A\n', b'very\n']
-                assert client.is_send_buffer_full()
-                client.resume_writing()
-                assert not client.is_send_buffer_full()
+                assert not protocol_can_send.is_set()
+                protocol.resume_writing()
+                assert protocol._can_send.is_set()
 
             limit = 2
             msgs = b'A very long and boring meessage'.split()
             task = await spawn(monitor)
             for msg in msgs:
-                await client._send_message(msg)
-            assert called == [client.framer.frame(msg) for msg in msgs]
+                await session._send_message(msg)
+            assert called == [session.framer.frame(msg) for msg in msgs]
             limit = None
             # Check idempotent
-            client.resume_writing()
+            protocol.resume_writing()
 
     @pytest.mark.asyncio
     async def test_slow_connection_aborted(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
-            assert client.max_send_delay >= 10
-            client.max_send_delay = 0.004
-            client.pause_writing()
-            assert not client._can_send.is_set()
-            task = await spawn(client._send_message(b'a'))
-            await sleep(client.max_send_delay * 3)
+        async with connect_rs('localhost', server.port) as session:
+            protocol = session.transport
+            assert session.max_send_delay >= 10
+            session.max_send_delay = 0.004
+            protocol.pause_writing()
+            assert not protocol._can_send.is_set()
+            task = await spawn(session._send_message(b'a'))
+            await sleep(session.max_send_delay * 3)
             assert task.cancelled()
-            assert client._can_send.is_set()
-            assert client.is_closing()
+            assert protocol._can_send.is_set()
+            assert session.is_closing()
 
     @pytest.mark.asyncio
     async def test_concurrency(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             # Prevent this interfering
             client.cost_decay_per_sec = 0
             # Outgoing sessions by default have no cost limits
             client.cost_hard_limit = RPCSession.cost_hard_limit
             # Test usage below soft limit
-            client.cost = client.cost_soft_limit - 10
-            client.recalc_concurrency()
-            assert client._incoming_concurrency.max_concurrent == client.initial_concurrent
-            assert client._cost_fraction == 0.0
+            session.cost = session.cost_soft_limit - 10
+            session.recalc_concurrency()
+            assert session._incoming_concurrency.max_concurrent == session.initial_concurrent
+            assert session._cost_fraction == 0.0
             # Test usage at soft limit doesn't affect concurrency
-            client.cost = client.cost_soft_limit
-            client.recalc_concurrency()
-            assert client._incoming_concurrency.max_concurrent == client.initial_concurrent
-            assert client._cost_fraction == 0.0
+            session.cost = session.cost_soft_limit
+            session.recalc_concurrency()
+            assert session._incoming_concurrency.max_concurrent == session.initial_concurrent
+            assert session._cost_fraction == 0.0
             # Test usage half-way
-            client.cost = (client.cost_soft_limit + client.cost_hard_limit) // 2
-            client.recalc_concurrency()
-            assert 1 < client._incoming_concurrency.max_concurrent < client.initial_concurrent
-            assert 0.49 < client._cost_fraction < 0.51
+            session.cost = (session.cost_soft_limit + session.cost_hard_limit) // 2
+            session.recalc_concurrency()
+            assert 1 < session._incoming_concurrency.max_concurrent < session.initial_concurrent
+            assert 0.49 < session._cost_fraction < 0.51
             # Test at hard limit
-            client.cost = client.cost_hard_limit
-            client.recalc_concurrency()
-            assert client._cost_fraction == 1.0
+            session.cost = session.cost_hard_limit
+            session.recalc_concurrency()
+            assert session._cost_fraction == 1.0
             # Test above hard limit disconnects
-            client.cost = client.cost_hard_limit + 1
-            client.recalc_concurrency()
+            session.cost = session.cost_hard_limit + 1
+            session.recalc_concurrency()
             with pytest.raises(ExcessiveSessionCostError):
-                async with client._incoming_concurrency:
+                async with session._incoming_concurrency:
                     pass
 
     @pytest.mark.asyncio
@@ -402,86 +378,84 @@ class TestRPCSession:
 
     @pytest.mark.asyncio
     async def test_concurrency_decay(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
-            client.cost_decay_per_sec = 100
-            client.cost = 1000
+        async with connect_rs('localhost', server.port) as session:
+            session.cost_decay_per_sec = 100
+            session.cost = 1000
             await sleep(0.01)
-            client.recalc_concurrency()
-            assert 995 < client.cost < 999
+            session.recalc_concurrency()
+            assert 995 < session.cost < 999.01
 
     @pytest.mark.asyncio
     async def test_concurrency_hard_limit_0(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
-            client.cost = 1_000_000_000
-            client.cost_hard_limit = 0
-            client.recalc_concurrency()
-            assert client._incoming_concurrency.max_concurrent == client.initial_concurrent
+        async with connect_rs('localhost', server.port) as session:
+            session.cost = 1_000_000_000
+            session.cost_hard_limit = 0
+            session.recalc_concurrency()
+            assert session._incoming_concurrency.max_concurrent == session.initial_concurrent
 
     @pytest.mark.asyncio
     async def test_extra_cost(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
-            # Outgoing sessions by default have no cost limits
-            client.cost_hard_limit = RPCSession.cost_hard_limit
-            client.extra_cost = lambda: client.cost_soft_limit + 1
-            client.recalc_concurrency()
-            assert 1 > client._cost_fraction > 0
-            client.extra_cost = lambda: client.cost_hard_limit + 1
-            client.recalc_concurrency()
-            assert client._cost_fraction > 1
+        async with connect_rs('localhost', server.port) as session:
+            session.extra_cost = lambda: session.cost_soft_limit + 1
+            session.recalc_concurrency()
+            assert 1 > session._cost_fraction > 0
+            session.extra_cost = lambda: session.cost_hard_limit + 1
+            session.recalc_concurrency()
+            assert session._cost_fraction > 1
 
     @pytest.mark.asyncio
     async def test_request_over_hard_limit(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             server = await MyServerSession.current_server()
             server.bump_cost(server.cost_hard_limit + 100)
             async with timeout_after(0.1):
                 with pytest.raises(RPCError) as e:
-                    await client.send_request('echo', [23])
+                    await session.send_request('echo', [23])
             assert 'excessive resource usage' in str(e.value)
 
     @pytest.mark.asyncio
     async def test_request_sleep(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             server = await MyServerSession.current_server()
             server.bump_cost((server.cost_soft_limit + server.cost_hard_limit) / 2)
             server.cost_sleep = 0.1
             t1 = time.time()
-            await client.send_request('echo', [23])
+            await session.send_request('echo', [23])
             t2 = time.time()
             assert t2 - t1 > server.cost_sleep / 2
 
     @pytest.mark.asyncio
     async def test_server_busy(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             server = await MyServerSession.current_server()
             server.processing_timeout = 0.01
             with pytest.raises(RPCError) as e:
-                await client.send_request('sleepy')
+                await session.send_request('sleepy')
             assert 'server busy' in str(e.value)
             assert server.errors == 1
 
     @pytest.mark.asyncio
     async def test_reply_and_disconnect_value(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             value = 42
-            assert await client.send_request('disconnect', [value]) == value
+            assert await session.send_request('disconnect', [value]) == value
             await sleep(0)
-            assert client.is_closing()
+            assert session.is_closing()
 
     @pytest.mark.asyncio
     async def test_reply_and_disconnect_error(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             with pytest.raises(RPCError) as e:
-                assert await client.send_request('disconnect')
+                assert await session.send_request('disconnect')
             exc = e.value
             assert exc.code == 1 and exc.message == 'incompatible version'
-            assert client.is_closing()
+            assert session.is_closing()
 
     @pytest.mark.asyncio
     async def test_send_empty_batch(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             with RaiseTest(JSONRPC.INVALID_REQUEST, 'empty', ProtocolError):
-                async with client.send_batch() as batch:
+                async with session.send_batch() as batch:
                     pass
             assert len(batch) == 0
             assert batch.batch is None
@@ -489,8 +463,8 @@ class TestRPCSession:
 
     @pytest.mark.asyncio
     async def test_send_batch(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
-            async with client.send_batch() as batch:
+        async with connect_rs('localhost', server.port) as session:
+            async with session.send_batch() as batch:
                 batch.add_request("echo", [1])
                 batch.add_notification("echo", [2])
                 batch.add_request("echo", [3])
@@ -503,8 +477,8 @@ class TestRPCSession:
 
     @pytest.mark.asyncio
     async def test_send_batch_errors_quiet(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
-            async with client.send_batch() as batch:
+        async with connect_rs('localhost', server.port) as session:
+            async with session.send_batch() as batch:
                 batch.add_request("echo", [1])
                 batch.add_request("bug")
 
@@ -516,9 +490,9 @@ class TestRPCSession:
 
     @pytest.mark.asyncio
     async def test_send_batch_errors(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             with pytest.raises(BatchError) as e:
-                async with client.send_batch(raise_errors=True) as batch:
+                async with session.send_batch(raise_errors=True) as batch:
                     batch.add_request("echo", [1])
                     batch.add_request("bug")
 
@@ -531,73 +505,74 @@ class TestRPCSession:
 
     @pytest.mark.asyncio
     async def test_send_batch_cancelled(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             async def send_batch():
-                async with client.send_batch(raise_errors=True) as batch:
+                async with session.send_batch(raise_errors=True) as batch:
                     batch.add_request('sleepy')
 
             task = await spawn(send_batch)
-            await client.close()
-            with pytest.raises(CancelledError):
-                task.result()
+            await session.close()
+            await asyncio.wait([task])
+            assert task.cancelled()
 
     @pytest.mark.asyncio
     async def test_send_batch_bad_request(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             with RaiseTest(JSONRPC.METHOD_NOT_FOUND, 'string', ProtocolError):
-                async with client.send_batch() as batch:
+                async with session.send_batch() as batch:
                     batch.add_request(23)
 
     @pytest.mark.asyncio
     async def test_send_request_throttling(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             N = 3
-            client.recalibrate_count = N
-            prior = client._outgoing_concurrency.max_concurrent
+            session.recalibrate_count = N
+            prior = session._outgoing_concurrency.max_concurrent
             async with TaskGroup() as group:
                 for n in range(N):
-                    await group.spawn(client.send_request("echo", ["ping"]))
-            current = client._outgoing_concurrency.max_concurrent
+                    await group.spawn(session.send_request("echo", ["ping"]))
+            current = session._outgoing_concurrency.max_concurrent
             assert prior * 1.2 > current > prior
 
     @pytest.mark.asyncio
     async def test_send_batch_throttling(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             N = 3
-            client.recalibrate_count = N
-            prior = client._outgoing_concurrency.max_concurrent
-            async with client.send_batch() as batch:
+            session.recalibrate_count = N
+            prior = session._outgoing_concurrency.max_concurrent
+            async with session.send_batch() as batch:
                 for n in range(N):
                     batch.add_request("echo", ["ping"])
-            current = client._outgoing_concurrency.max_concurrent
+            current = session._outgoing_concurrency.max_concurrent
             assert prior * 1.2 > current > prior
 
     @pytest.mark.asyncio
     async def test_sent_request_timeout(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
-            client.sent_request_timeout = 0.01
+        async with connect_rs('localhost', server.port) as session:
+            session.sent_request_timeout = 0.01
             start = time.time()
             with pytest.raises(TaskTimeout):
-                await client.send_request('sleepy')
+                await session.send_request('sleepy')
             assert time.time() - start < 0.1
 
     @pytest.mark.asyncio
     async def test_log_me(self, server, caplog):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             server = await MyServerSession.current_server()
 
             with caplog.at_level(logging.INFO):
                 assert server.log_me is False
-                await client.send_request('echo', ['ping'])
+                await session.send_request('echo', ['ping'])
                 assert caplog_count(caplog, '"method": "echo"') == 0
 
                 server.log_me = True
-                await client.send_request('echo', ['ping'])
+                await session.send_request('echo', ['ping'])
                 assert caplog_count(caplog, '"method": "echo"') == 1
 
 
-class RPCClient(RPCSession):
+class WireRPCSession(RPCSession):
     # For tests of wire messages
+
     async def send(self, item):
         if not isinstance(item, str):
             item = json.dumps(item)
@@ -609,119 +584,123 @@ class RPCClient(RPCSession):
         return json.loads(message.decode())
 
 
+def connect_wire_session(host, port):
+    return connect_rs(host, port, session_factory=WireRPCSession)
+
+
 class TestWireResponses(object):
     # These tests are similar to those in the JSON RPC v2 specification
 
     @pytest.mark.asyncio
     async def test_send_request(self, server):
-        async with Connector(RPCClient, 'localhost', server.port) as client:
+        async with connect_wire_session('localhost', server.port) as session:
             item = {"jsonrpc": "2.0", "method": "echo", "params": [[42, 43]],
                     "id": 1}
-            await client.send(item)
-            assert await client.response() == {"jsonrpc": "2.0",
+            await session.send(item)
+            assert await session.response() == {"jsonrpc": "2.0",
                                                "result": [42, 43], "id": 1}
 
     @pytest.mark.asyncio
     async def test_send_request_named(self, server):
-        async with Connector(RPCClient, 'localhost', server.port) as client:
+        async with connect_wire_session('localhost', server.port) as session:
             item = {"jsonrpc": "2.0", "method": "echo", "params":
                     {"value" : [42, 43]}, "id": 3}
-            await client.send(item)
-            assert await client.response() == {"jsonrpc": "2.0",
+            await session.send(item)
+            assert await session.response() == {"jsonrpc": "2.0",
                                                "result": [42, 43], "id": 3}
 
     @pytest.mark.asyncio
     async def test_send_notification(self, server):
-        async with Connector(RPCClient, 'localhost', server.port) as client:
+        async with connect_wire_session('localhost', server.port) as session:
             item = {"jsonrpc": "2.0", "method": "echo", "params": [[42, 43]]}
-            await client.send(item)
+            await session.send(item)
             with pytest.raises(TaskTimeout):
                 async with timeout_after(0.002):
-                    await client.response()
+                    await session.response()
 
     @pytest.mark.asyncio
     async def test_send_non_existent_notification(self, server):
-        async with Connector(RPCClient, 'localhost', server.port) as client:
+        async with connect_wire_session('localhost', server.port) as session:
             item = {"jsonrpc": "2.0", "method": "zz", "params": [[42, 43]]}
-            await client.send(item)
+            await session.send(item)
             with pytest.raises(TaskTimeout):
                 async with timeout_after(0.002):
-                    await client.response()
+                    await session.response()
 
     @pytest.mark.asyncio
     async def test_send_non_existent_method(self, server):
-        async with Connector(RPCClient, 'localhost', server.port) as client:
+        async with connect_wire_session('localhost', server.port) as session:
             item = {"jsonrpc": "2.0", "method": "foobar", "id": 0}
-            await client.send(item)
-            assert await client.response() == {
+            await session.send(item)
+            assert await session.response() == {
                 "jsonrpc": "2.0", "id": 0, "error":
                 {'code': -32601, 'message': 'unknown method "foobar"'}}
 
     @pytest.mark.asyncio
     async def test_send_invalid_json(self, server):
-        async with Connector(RPCClient, 'localhost', server.port) as client:
+        async with connect_wire_session('localhost', server.port) as session:
             item = '{"jsonrpc": "2.0", "method": "foobar, "params": "bar", "b]'
-            await client.send(item)
-            assert await client.response() == {
+            await session.send(item)
+            assert await session.response() == {
                 "jsonrpc": "2.0", "error":
                 {"code": -32700, "message": "invalid JSON"}, "id": None}
 
     @pytest.mark.asyncio
     async def test_send_invalid_request_object(self, server):
-        async with Connector(RPCClient, 'localhost', server.port) as client:
+        async with connect_wire_session('localhost', server.port) as session:
             item = {"jsonrpc": "2.0", "method": 1, "params": "bar"}
-            await client.send(item)
-            assert await client.response() == {
+            await session.send(item)
+            assert await session.response() == {
                 "jsonrpc": "2.0", "id": None,
                 "error": {"code": -32602, "message":
                           "invalid request arguments: bar"}}
 
     @pytest.mark.asyncio
     async def test_send_batch_invalid_json(self, server):
-        async with Connector(RPCClient, 'localhost', server.port) as client:
+        async with connect_wire_session('localhost', server.port) as session:
             item = ('[{"jsonrpc": "2.0", "method": "sum", "params": [1,2,4],'
                     '"id": "1"}, {"jsonrpc": "2.0", "method"  ]')
-            await client.send(item)
-            assert await client.response() == {
+            await session.send(item)
+            assert await session.response() == {
                 "jsonrpc": "2.0", "id": None,
                 "error": {"code": -32700, "message": "invalid JSON"}}
 
     @pytest.mark.asyncio
     async def test_send_empty_batch(self, server):
-        async with Connector(RPCClient, 'localhost', server.port) as client:
+        async with connect_wire_session('localhost', server.port) as session:
             item = []
-            await client.send(item)
-            assert await client.response() == {
+            await session.send(item)
+            assert await session.response() == {
                 "jsonrpc": "2.0", "id": None,
                 "error": {"code": -32600, "message": "batch is empty"}}
 
     @pytest.mark.asyncio
     async def test_send_invalid_batch(self, server):
-        async with Connector(RPCClient, 'localhost', server.port) as client:
+        async with connect_wire_session('localhost', server.port) as session:
             item = [1]
-            await client.send(item)
-            assert await client.response() == [{
+            await session.send(item)
+            assert await session.response() == [{
                 "jsonrpc": "2.0", "id": None,
                 "error": {"code": -32600, "message":
                           "request object must be a dictionary"}}]
 
     @pytest.mark.asyncio
     async def test_send_invalid_batch_3(self, server):
-        async with Connector(RPCClient, 'localhost', server.port) as client:
+        async with connect_wire_session('localhost', server.port) as session:
             item = [1, 2, 3]
-            await client.send(item)
-            assert await client.response() == [{
+            await session.send(item)
+            assert await session.response() == [{
                 "jsonrpc": "2.0", "id": None,
                 "error": {"code": -32600, "message":
                           "request object must be a dictionary"}}] * 3
 
     @pytest.mark.asyncio
     async def test_send_partly_invalid_batch(self, server):
-        async with Connector(RPCClient, 'localhost', server.port) as client:
+        async with connect_wire_session('localhost', server.port) as session:
             item = [1, {"jsonrpc": "2.0", "method": "echo", "params": [42],
                         "id": 0}]
-            await client.send(item)
-            assert await client.response() == [
+            await session.send(item)
+            assert await session.response() == [
                 { "jsonrpc": "2.0", "id": None,
                   "error": {"code": -32600, "message":
                             "request object must be a dictionary"}},
@@ -729,69 +708,43 @@ class TestWireResponses(object):
 
     @pytest.mark.asyncio
     async def test_send_mixed_batch(self, server):
-        async with Connector(RPCClient, 'localhost', server.port) as client:
+        async with connect_wire_session('localhost', server.port) as session:
             item = [
                 {"jsonrpc": "2.0", "method": "echo", "params": [40], "id": 3},
                 {"jsonrpc": "2.0", "method": "echo", "params": [42]},
                 {"jsonrpc": "2.0", "method": "echo", "params": [41], "id": 2}
             ]
-            await client.send(item)
-            assert await client.response() == [
+            await session.send(item)
+            assert await session.response() == [
                 {"jsonrpc": "2.0", "result": 40, "id": 3},
                 {"jsonrpc": "2.0", "result": 41, "id": 2}
             ]
 
     @pytest.mark.asyncio
     async def test_send_notification_batch(self, server):
-        async with Connector(RPCClient, 'localhost', server.port) as client:
+        async with connect_wire_session('localhost', server.port) as session:
             item = [{"jsonrpc": "2.0", "method": "echo", "params": [42]}] * 2
-            await client.send(item)
+            await session.send(item)
             with pytest.raises(TaskTimeout):
                 async with timeout_after(0.002):
-                    assert await client.response()
-
-
-@pytest.mark.asyncio
-async def test_base_class_implementation():
-    session = RPCSession()
-    await session.handle_request(Request('', []))
-    from aiorpcx.session import SessionBase
-    with pytest.raises(NotImplementedError):
-        # default_framer
-        SessionBase()
-    session = SessionBase(framer=NewlineFramer())
-    with pytest.raises(NotImplementedError):
-        session._receive_messages()
-
-
-def test_default_and_passed_connection():
-    connection = JSONRPCConnection(JSONRPCv1)
-    class RPCClient(RPCSession):
-        def default_connection(self):
-            return connection
-
-    session = RPCClient()
-    assert session.connection == connection
-
-    session = RPCSession(connection=connection)
-    assert session.connection == connection
+                    assert await session.response()
 
 
 class MessageServer(MessageSession):
 
-    @classmethod
-    async def current_server(self):
-        await sleep(0)
-        return self._current_server
-
-    def connection_made(self, transport):
-        MessageServer._current_server = self
-        super().connection_made(transport)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        MessageServer._current_session = self
         self.messages = []
 
-    def connection_lost(self, exc):
-        MessageServer._current_server = None
-        super().connection_lost(exc)
+    @classmethod
+    async def current_server(self):
+        await sleep(0.001)
+        return self._current_session
+
+    def connection_lost(self):
+        super().connection_lost()
+        MessageServer._current_session = None
 
     async def handle_message(self, message):
         command, payload = message
@@ -807,20 +760,31 @@ class MessageServer(MessageSession):
 
 @pytest.fixture
 def msg_server(event_loop, unused_tcp_port):
-    port = unused_tcp_port
-    server = Server(MessageServer, 'localhost', port, loop=event_loop)
-    event_loop.run_until_complete(server.listen())
+    coro = serve_rs(MessageServer, 'localhost', unused_tcp_port, loop=event_loop)
+    server = event_loop.run_until_complete(coro)
     yield server
-    event_loop.run_until_complete(server.close())
+    if hasattr(asyncio, 'all_tasks'):
+        tasks = asyncio.all_tasks(event_loop)
+    else:
+        tasks = asyncio.Task.all_tasks(loop=event_loop)
+    async def close_all():
+        await server.close()
+        if tasks:
+            await asyncio.wait(tasks)
+    event_loop.run_until_complete(close_all())
+
+
+def connect_message_session(host, port, proxy=None):
+    return connect_rs(host, port, proxy=proxy, session_factory=MessageSession)
 
 
 class TestMessageSession(object):
 
     @pytest.mark.asyncio
     async def test_basic_send(self, msg_server):
-        async with Connector(MessageSession, 'localhost', msg_server.port) as client:
+        async with connect_message_session('localhost', msg_server.port) as session:
             server_session = await MessageServer.current_server()
-            await client.send_message((b'version', b'abc'))
+            await session.send_message((b'version', b'abc'))
             # Give the receiving task time to process before closing the connection
             await sleep(0.01)
         assert server_session.messages == [(b'version', b'abc')]
@@ -828,22 +792,20 @@ class TestMessageSession(object):
     @pytest.mark.asyncio
     async def test_many_sends(self, msg_server):
         count = 12
-        async with Connector(MessageSession, 'localhost',
-                             msg_server.port) as client:
+        async with connect_message_session('localhost', msg_server.port) as session:
             server_session = await MessageServer.current_server()
             for n in range(count):
-                await client.send_message((b'version', b'abc'))
+                await session.send_message((b'version', b'abc'))
             # Give the receiving task time to process before closing the connection
             await sleep(0.01)
         assert server_session.messages == [(b'version', b'abc')] * count
 
     @pytest.mark.asyncio
     async def test_errors(self, msg_server, caplog):
-        async with Connector(MessageSession, 'localhost',
-                             msg_server.port) as client:
-            await client.send_message((b'syntax', b''))
-            await client.send_message((b'protocol', b''))
-            await client.send_message((b'cancel', b''))
+        async with connect_message_session('localhost', msg_server.port) as session:
+            await session.send_message((b'syntax', b''))
+            await session.send_message((b'protocol', b''))
+            await session.send_message((b'cancel', b''))
             # Give the receiving task time to process before closing the connection
             await sleep(0.01)
         assert in_caplog(caplog, 'exception handling')
@@ -851,38 +813,34 @@ class TestMessageSession(object):
 
     @pytest.mark.asyncio
     async def test_bad_magic(self, msg_server, caplog):
-        async with Connector(MessageSession, 'localhost',
-                             msg_server.port) as client:
-            msg = bytearray(client.framer.frame((b'version', b'')))
+        async with connect_message_session('localhost', msg_server.port) as session:
+            msg = bytearray(session.framer.frame((b'version', b'')))
             msg[0] = msg[0] ^ 1
-            client.transport.write(msg)
+            await session.transport.write(msg)
             # Give the receiving task time to process before closing the connection
             await sleep(0.01)
         assert in_caplog(caplog, 'bad network magic')
 
     @pytest.mark.asyncio
     async def test_bad_checksum(self, msg_server, caplog):
-        async with Connector(MessageSession, 'localhost',
-                             msg_server.port) as client:
-            msg = bytearray(client.framer.frame((b'version', b'')))
+        async with connect_message_session('localhost', msg_server.port) as session:
+            msg = bytearray(session.framer.frame((b'version', b'')))
             msg[-1] = msg[-1] ^ 1
-            client.transport.write(msg)
+            await session.transport.write(msg)
             # Give the receiving task time to process before closing the connection
             await sleep(0.01)
         assert in_caplog(caplog, 'checksum mismatch')
 
     @pytest.mark.asyncio
     async def test_oversized_message(self, msg_server, caplog):
-        async with Connector(MessageSession, 'localhost',
-                             msg_server.port) as client:
+        async with connect_message_session('localhost', msg_server.port) as session:
             big = 1024 * 1024
-            await client.send_message((b'version', bytes(big)))
+            await session.send_message((b'version', bytes(big)))
             # Give the receiving task time to process before closing the connection
             await sleep(0.01)
         assert not in_caplog(caplog, 'oversized payload')
-        async with Connector(MessageSession, 'localhost',
-                             msg_server.port) as client:
-            await client.send_message((b'version', bytes(big + 1)))
+        async with connect_message_session('localhost', msg_server.port) as session:
+            await session.send_message((b'version', bytes(big + 1)))
             # Give the receiving task time to process before closing the connection
             await sleep(0.01)
         assert in_caplog(caplog, 'oversized payload')
@@ -891,38 +849,33 @@ class TestMessageSession(object):
     async def test_proxy(self, msg_server):
         proxy = SOCKSProxy('localhost:79', SOCKS5, None)
         with pytest.raises(OSError):
-            async with Connector(MessageSession, 'localhost', msg_server.port, proxy=proxy):
+            async with connect_message_session('localhost', msg_server.port, proxy=proxy):
                 pass
 
     @pytest.mark.asyncio
-    async def test_coverage(self):
-        session = MessageSession()
-        await session.handle_message(b'')
-
-    @pytest.mark.asyncio
     async def test_request_sleeps(self, msg_server, caplog):
-        async with Connector(MessageSession, 'localhost', msg_server.port) as client:
+        async with connect_message_session('localhost', msg_server.port) as session:
             server = await MessageServer.current_server()
             server.bump_cost((server.cost_soft_limit + server.cost_hard_limit) / 2)
             # Messaging doesn't wait, so this is just for code coverage
-            await client.send_message((b'version', b'abc'))
+            await session.send_message((b'version', b'abc'))
 
     @pytest.mark.asyncio
     async def test_request_over_hard_limit(self, msg_server):
-        async with Connector(MessageSession, 'localhost', msg_server.port) as client:
+        async with connect_message_session('localhost', msg_server.port) as session:
             server = await MessageServer.current_server()
             server.bump_cost(server.cost_hard_limit + 100)
-            await client.send_message((b'version', b'abc'))
+            await session.send_message((b'version', b'abc'))
             await sleep(0.005)
-            assert client.is_closing()
+            assert session.is_closing()
 
     @pytest.mark.asyncio
     async def test_server_busy(self, msg_server, caplog):
-        async with Connector(MessageSession, 'localhost', msg_server.port) as client:
+        async with connect_message_session('localhost', msg_server.port) as session:
             server = await MessageServer.current_server()
             server.processing_timeout = 0.01
             with caplog.at_level(logging.INFO):
-                await client.send_message((b'sleep', b''))
+                await session.send_message((b'sleep', b''))
                 await sleep(0.02)
             assert server.errors == 1
         assert in_caplog(caplog, 'timed out')

@@ -34,5 +34,5 @@ class ServerSession(aiorpcx.RPCSession):
 
 
 loop = asyncio.get_event_loop()
-loop.run_until_complete(aiorpcx.serve(ServerSession, 'localhost', 8888))
+loop.run_until_complete(aiorpcx.serve_ws(ServerSession, 'localhost', 8889))
 loop.run_forever()

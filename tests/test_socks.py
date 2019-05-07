@@ -2,11 +2,13 @@ import asyncio
 import ipaddress
 import os
 import struct
+from functools import partial
 from random import randrange
 
 import pytest
 
 from aiorpcx.socks import NeedData
+from aiorpcx.rawsocket import RSTransport
 from aiorpcx import *
 
 
@@ -550,11 +552,10 @@ class TestSOCKSProxy(object):
         assert result.peername[0] in local_hosts(proxy_address.host)
         assert result.peername[1] == proxy_address.port
 
-    @pytest.mark.asyncio
-    async def test_auto_detect_at_address_failure(self):
-        async with ignore_after(1.0):
-            result = await SOCKSProxy.auto_detect_at_address('8.8.8.8:53', None)
-            assert result is None
+    # @pytest.mark.asyncio
+    # async def test_auto_detect_at_address_failure(self):
+    #     result = await SOCKSProxy.auto_detect_at_address('8.8.8.8:53', None)
+    #     assert result is None
 
     @pytest.mark.asyncio
     async def test_auto_detect_at_address_cannot_connect(self):
@@ -565,7 +566,8 @@ class TestSOCKSProxy(object):
     async def test_autodetect_at_host_success(self, proxy_address, auth):
         chosen_auth = 2 if auth else 0
         FakeServer.response = TestSOCKS5.response(chosen_auth, 'wwww.apple.com')
-        result = await SOCKSProxy.auto_detect_at_host(proxy_address.host, [proxy_address.port], auth)
+        result = await SOCKSProxy.auto_detect_at_host(proxy_address.host,
+                                                      [proxy_address.port], auth)
         assert isinstance(result, SOCKSProxy)
         assert result.protocol is SOCKS5
         assert result.address == proxy_address
@@ -593,39 +595,31 @@ class TestSOCKSProxy(object):
         chosen_auth = 2 if auth else 0
         FakeServer.response = TestSOCKS5.response(chosen_auth, 'wwww.apple.com')
         proxy = SOCKSProxy(proxy_address, SOCKS5, auth)
-        _, protocol = await proxy.create_connection(RPCSession, GCOM.host, GCOM.port)
-        try:
-            assert protocol.remote_address() == GCOM
-            assert protocol.proxy() is proxy
+        async with connect_rs(GCOM.host, GCOM.port, proxy) as session:
+            assert session.remote_address() == GCOM
+            assert session.proxy() is proxy
             assert proxy.peername[0] in local_hosts(proxy_address.host)
             assert proxy.peername[1] == proxy_address.port
-            assert isinstance(protocol, RPCSession)
-        finally:
-            await protocol.close()
+            assert isinstance(session, RPCSession)
 
     @pytest.mark.asyncio
     async def test_create_connection_resolve_good(self, proxy_address, auth):
         chosen_auth = 2 if auth else 0
         proxy = SOCKSProxy(proxy_address, SOCKS5, auth)
-        FakeServer.response = TestSOCKS5.response(chosen_auth,
-                                                  'wwww.apple.com')
-        _, protocol = await proxy.create_connection(RPCSession, GCOM.host, GCOM.port,
-                                                    resolve=True)
-        try:
-            assert protocol.remote_address().host not in (None, GCOM.host)
-            assert protocol.remote_address().port == GCOM.port
+        FakeServer.response = TestSOCKS5.response(chosen_auth, 'wwww.apple.com')
+        async with connect_rs(GCOM.host, GCOM.port, proxy, resolve=True) as session:
+            assert session.remote_address().host not in (None, GCOM.host)
+            assert session.remote_address().port == GCOM.port
             assert proxy.peername[0] in local_hosts(proxy_address.host)
             assert proxy.peername[1] == proxy_address.port
-            assert isinstance(protocol, RPCSession)
-        finally:
-            await protocol.close()
+            assert isinstance(session, RPCSession)
 
     @pytest.mark.asyncio
     async def test_create_connection_resolve_bad(self, proxy_address, auth):
+        protocol_factory = partial(RSTransport, RPCSession, 'client')
         proxy = SOCKSProxy(proxy_address, SOCKS5, auth)
         with pytest.raises(OSError):
-            await proxy.create_connection(RPCSession, 'foobar.onion',
-                                          80, resolve=True)
+            await proxy.create_connection(protocol_factory, 'foobar.onion', 80, resolve=True)
 
     def test_str(self):
         address = NetAddress('localhost', 80)

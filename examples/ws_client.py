@@ -2,8 +2,8 @@ import asyncio
 import aiorpcx
 
 
-async def connect(host, port):
-    async with aiorpcx.connect(host, port) as session:
+async def connect(uri):
+    async with aiorpcx.connect_ws(uri) as session:
         # A good request with standard argument passing
         result = await session.send_request('echo', ["Howdy"])
         print(result)
@@ -25,7 +25,7 @@ async def connect(host, port):
             try:
                 await session.send_request(*bad_args)
             except Exception as exc:
-                print(repr(exc))
+                print('Send reuest exception:', repr(exc))
 
         # Batch requests
         async with session.send_batch() as batch:
@@ -37,4 +37,4 @@ async def connect(host, port):
             print(f'batch result #{n}: {result}')
 
 
-asyncio.get_event_loop().run_until_complete(connect('localhost', 8888))
+asyncio.get_event_loop().run_until_complete(connect('ws://localhost:8889'))

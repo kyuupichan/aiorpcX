@@ -1,4 +1,4 @@
-# Copyright (c) 2018, Neil Booth
+# Copyright (c) 2018-2019, Neil Booth
 #
 # All rights reserved.
 #
@@ -24,19 +24,17 @@
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
-__all__ = ('Connector', 'RPCSession', 'MessageSession', 'Server', 'ExcessiveSessionCostError',
+__all__ = ('RPCSession', 'MessageSession', 'ExcessiveSessionCostError',
            'BatchError', 'Concurrency', 'ReplyAndDisconnect')
 
 
 import asyncio
-from contextlib import suppress
 import logging
 from math import ceil
 import time
 
 from aiorpcx.curio import (
-    Event, TaskGroup, TaskTimeout, CancelledError,
-    timeout_after, spawn_sync, ignore_after, sleep
+    TaskGroup, TaskTimeout, CancelledError, timeout_after, spawn_sync, sleep
 )
 from aiorpcx.framing import (
     NewlineFramer, BitcoinFramer, BadMagicError, BadChecksumError, OversizedPayloadError
@@ -45,50 +43,18 @@ from aiorpcx.jsonrpc import (
     Request, Batch, Notification, ProtocolError, RPCError,
     JSONRPC, JSONRPCv2, JSONRPCConnection
 )
-from aiorpcx.util import NetAddress
 
 
 class ReplyAndDisconnect(Exception):
     '''Force a session disconnect after sending result (a Python object or an RPCError).
     '''
 
-    def __init__(self, result):
-        self.result = result
-
-
-class Connector(object):
-
-    def __init__(self, session_factory, host=None, port=None, proxy=None,
-                 **kwargs):
-        self.session_factory = session_factory
-        self.host = host
-        self.port = port
-        self.proxy = proxy
-        self.protocol = None
-        self.loop = kwargs.get('loop', asyncio.get_event_loop())
-        self.kwargs = kwargs
-
-    async def create_connection(self):
-        '''Initiate a connection.'''
-        connector = self.proxy or self.loop
-        return await connector.create_connection(
-            self.session_factory, self.host, self.port, **self.kwargs)
-
-    async def __aenter__(self):
-        _transport, self.protocol = await self.create_connection()
-        # By default, do not limit outgoing connections
-        self.protocol.cost_hard_limit = 0
-        return self.protocol
-
-    async def __aexit__(self, exc_type, exc_value, traceback):
-        await self.protocol.close()
-
 
 class ExcessiveSessionCostError(RuntimeError):
     pass
 
 
-class Concurrency(object):
+class Concurrency:
 
     def __init__(self, target):
         self._target = int(target)
@@ -120,18 +86,11 @@ class Concurrency(object):
             self._semaphore.release()
 
 
-class SessionBase(asyncio.Protocol):
+class SessionBase:
     '''Base class of networking sessions.
 
     There is no client / server distinction other than who initiated
     the connection.
-
-    To initiate a connection to a remote server pass host, port and
-    proxy to the constructor, and then call create_connection().  Each
-    successful call should have a corresponding call to close().
-
-    Alternatively if used in a with statement, the connection is made
-    on entry to the block, and closed on exit from the block.
     '''
 
     # Multiply this by bandwidth bytes used to get resource usage cost
@@ -153,21 +112,14 @@ class SessionBase(asyncio.Protocol):
     # Force-close a connection if its socket send buffer stays full this long
     max_send_delay = 20.0
 
-    def __init__(self, *, framer=None, loop=None):
+    def __init__(self, transport, *, framer=None, loop=None):
+        self.transport = transport
         self.framer = framer or self.default_framer()
         self.loop = loop or asyncio.get_event_loop()
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.transport = None
-        self.closed_event = self.event()
-        # Set when a connection is made
-        self._proxy = None
-        self._remote_address = None
         # For logger.debug messsages
         self.verbosity = 0
-        # Cleared when the send socket is full
-        self._can_send = self.event()
-        self._can_send.set()
-        self._task = None
+        self._task = spawn_sync(self._process_messages(), loop=self.loop)
         self._group = TaskGroup()
         # Statistics.  The RPC object also keeps its own statistics.
         self.start_time = time.time()
@@ -193,85 +145,42 @@ class SessionBase(asyncio.Protocol):
     def _receive_messages(self):
         raise NotImplementedError
 
-    async def _limited_wait(self, secs):
-        # Wait at most secs seconds to send, otherwise abort the connection
-        try:
-            async with timeout_after(secs):
-                await self._can_send.wait()
-        except TaskTimeout:
-            self.abort()
-            raise
-
     async def _send_message(self, message):
-        if not self._can_send.is_set():
-            await self._limited_wait(self.max_send_delay)
-        if not self.is_closing():
-            framed_message = self.framer.frame(message)
-            self.send_size += len(framed_message)
-            self.bump_cost(len(framed_message) * self.bw_cost_per_byte)
-            self.send_count += 1
-            self.last_send = time.time()
-            if self.verbosity >= 4:
-                self.logger.debug(f'Sending framed message {framed_message}')
-            self.transport.write(framed_message)
+        framed_message = self.framer.frame(message)
+        if self.verbosity >= 4:
+            self.logger.debug(f'Sending framed message {framed_message}')
+        try:
+            async with timeout_after(self.max_send_delay):
+                await self.transport.write(framed_message)
+        except TaskTimeout:
+            await self.abort()
+            raise
+        self.send_size += len(framed_message)
+        self.bump_cost(len(framed_message) * self.bw_cost_per_byte)
+        self.send_count += 1
+        self.last_send = time.time()
         return self.last_send
 
     def _bump_errors(self, exception=None):
         self.errors += 1
         self.bump_cost(self.error_base_cost + getattr(exception, 'cost', 0.0))
 
-    # asyncio framework
+    @property
+    def session_kind(self):
+        '''Either client or server.'''
+        return self.transport._kind
+
+    def connection_lost(self):
+        # Cancelling directly leads to self-cancellation problems for member functions
+        # await-ing self.close()
+        self.loop.call_soon(self._task.cancel)
+
     def data_received(self, framed_message):
-        '''Called by asyncio when a message comes in.'''
         if self.verbosity >= 4:
             self.logger.debug(f'Received framed message {framed_message}')
         self.recv_size += len(framed_message)
         self.bump_cost(len(framed_message) * self.bw_cost_per_byte)
         self.framer.received_bytes(framed_message)
-
-    def pause_writing(self):
-        '''Transport calls when the send buffer is full.'''
-        if not self.is_closing():
-            self._can_send.clear()
-            self.transport.pause_reading()
-
-    def resume_writing(self):
-        '''Transport calls when the send buffer has room.'''
-        if not self._can_send.is_set():
-            self._can_send.set()
-            self.transport.resume_reading()
-
-    def connection_made(self, transport):
-        '''Called by asyncio when a connection is established.
-
-        Derived classes overriding this method must call this first.'''
-        self.transport = transport
-        # If the Socks proxy was used then _proxy and _remote_address are already set
-        if self._proxy is None:
-            # This would throw if called on a closed SSL transport.  Fixed in asyncio in
-            # Python 3.6.1 and 3.5.4
-            peername = transport.get_extra_info('peername')
-            self._remote_address = NetAddress(peername[0], peername[1])
-        self._task = spawn_sync(self._process_messages(), loop=self.loop)
-
-    def connection_lost(self, exc):
-        '''Called by asyncio when the connection closes.
-
-        Tear down things done in connection_made.'''
-        # Work around uvloop bug; see https://github.com/MagicStack/uvloop/issues/246
-        if self.transport:
-            self.transport = None
-            # Release waiting tasks
-            self._can_send.set()
-            # Cancelling directly leads to self-cancellation problems for member
-            # functions await-ing self.close()
-            self.loop.call_soon(self._task.cancel)
-            self.closed_event.set()
-
-    # External API
-    def is_send_buffer_full(self):
-        '''Return True if the send socket buffer is full.'''
-        return not self._can_send.is_set()
 
     def bump_cost(self, delta):
         # Delta can be positive or negative
@@ -321,35 +230,23 @@ class SessionBase(asyncio.Protocol):
 
     def proxy(self):
         '''Returns the proxy used, or None.'''
-        return self._proxy
+        return self.transport.proxy()
 
     def remote_address(self):
         '''Returns a NetAddress or None if not connected.'''
-        return self._remote_address
+        return self.transport.remote_address()
 
     def is_closing(self):
         '''Return True if the connection is closing.'''
-        return not self.transport or self.transport.is_closing()
+        return self.transport.is_closing()
 
-    def event(self):
-        return Event(loop=self.loop)
-
-    def abort(self):
+    async def abort(self):
         '''Forcefully close the connection.'''
-        if self.transport:
-            self.transport.abort()
+        await self.transport.abort()
 
     async def close(self, *, force_after=30):
         '''Close the connection and return when closed.'''
-        if self.transport:
-            self.transport.close()
-            try:
-                async with timeout_after(force_after):
-                    await self.closed_event.wait()
-            except TaskTimeout:
-                self.abort()
-                await self.closed_event.wait()
-            await sleep(0)
+        await self.transport.close(force_after)
 
 
 class MessageSession(SessionBase):
@@ -434,7 +331,7 @@ class BatchError(Exception):
         self.request = request   # BatchRequest object
 
 
-class BatchRequest(object):
+class BatchRequest:
     '''Used to build a batch request to send to the server.  Stores
     the
 
@@ -508,8 +405,8 @@ class RPCSession(SessionBase):
     sent_request_timeout = 30.0
     log_me = False
 
-    def __init__(self, *, framer=None, loop=None, connection=None):
-        super().__init__(framer=framer, loop=loop)
+    def __init__(self, transport, *, framer=None, loop=None, connection=None):
+        super().__init__(transport, framer=framer, loop=loop)
         self.connection = connection or self.default_connection()
         # Concurrency control for outgoing request sending
         self._outgoing_concurrency = Concurrency(50)
@@ -553,6 +450,27 @@ class RPCSession(SessionBase):
                 for request in requests:
                     await self._group.spawn(self._throttled_request(request))
 
+    async def process_messages(self, recv_message):
+        while True:
+            message = await recv_message()
+            self.last_recv = time.time()
+            self.recv_count += 1
+            if self.log_me:
+                self.logger.info(f'processing {message}')
+
+            try:
+                requests = self.connection.receive_message(message)
+            except ProtocolError as e:
+                self.logger.debug(str(e))
+                if e.code == JSONRPC.PARSE_ERROR:
+                    e.cost = self.error_base_cost * 10
+                self._bump_errors(e)
+                if e.error_message:
+                    await self._send_message(e.error_message)
+            else:
+                for request in requests:
+                    await self._group.spawn(self._throttled_request(request))
+
     async def _throttled_request(self, request):
         '''Process a single request, respecting the concurrency limit.'''
         disconnect = False
@@ -571,7 +489,7 @@ class RPCSession(SessionBase):
             self.logger.info(f'incoming request {request} timed out after {timeout} secs')
             result = RPCError(JSONRPC.SERVER_BUSY, 'server busy - request timed out')
         except ReplyAndDisconnect as e:
-            result = e.result
+            result = e.args[0]
             disconnect = True
         except ExcessiveSessionCostError:
             result = RPCError(JSONRPC.EXCESSIVE_RESOURCE_USAGE, 'excessive resource usage')
@@ -612,10 +530,10 @@ class RPCSession(SessionBase):
             raise result
         return result
 
-    def connection_lost(self, exc):
+    def connection_lost(self):
+        super().connection_lost()
         # Cancel pending requests and message processing
         self.connection.cancel_pending_requests()
-        super().connection_lost(exc)
 
     # External API
     def default_connection(self):
@@ -654,29 +572,3 @@ class RPCSession(SessionBase):
         BatchRequest doc string.
         '''
         return BatchRequest(self, raise_errors)
-
-
-class Server(object):
-    '''A simple wrapper around an asyncio.Server object.'''
-
-    def __init__(self, session_factory, host=None, port=None, *,
-                 loop=None, **kwargs):
-        self.host = host
-        self.port = port
-        self.loop = loop or asyncio.get_event_loop()
-        self.server = None
-        self._session_factory = session_factory
-        self._kwargs = kwargs
-
-    async def listen(self):
-        self.server = await self.loop.create_server(
-            self._session_factory, self.host, self.port, **self._kwargs)
-
-    async def close(self):
-        '''Close the listening socket.  This does not close any ServerSession
-        objects created to handle incoming connections.
-        '''
-        if self.server:
-            self.server.close()
-            await self.server.wait_closed()
-            self.server = None
