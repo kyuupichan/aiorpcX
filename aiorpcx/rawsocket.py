@@ -32,6 +32,7 @@ import asyncio
 from functools import partial
 
 from aiorpcx.curio import Event, timeout_after, TaskTimeout
+from aiorpcx.framing import ConnectionLostError
 from aiorpcx.session import RPCSession, SessionBase
 from aiorpcx.util import NetAddress
 
@@ -51,14 +52,15 @@ class RSTransport(asyncio.Protocol):
         self._can_send = Event()
         self._can_send.set()
         self._closed_event = Event()
-        self._server_task = None
+        self._process_messages_task = None
 
     async def process_messages(self):
         try:
             await self.session.process_messages(self.receive_message)
-        except ConnectionError:
+        except ConnectionLostError:
             pass
         finally:
+            self._closed_event.set()
             self.session.connection_lost()
 
     async def receive_message(self):
@@ -75,8 +77,7 @@ class RSTransport(asyncio.Protocol):
             self._remote_address = NetAddress(peername[0], peername[1])
         self.session = self.session_factory(self)
         self._framer = self._framer or self.session.default_framer()
-        #if self.kind == 'server':
-        #    self._server_task = self.loop.create_task(self.process_messages())
+        self._process_messages_task = self.loop.create_task(self.process_messages())
 
     def connection_lost(self, exc):
         '''Called by asyncio when the connection closes.
@@ -87,8 +88,7 @@ class RSTransport(asyncio.Protocol):
             return
         # Release waiting tasks
         self._can_send.set()
-        self._closed_event.set()
-        self.session.connection_lost()
+        self._framer.received_bytes(None)
 
     def data_received(self, data):
         '''Called by asyncio when a message comes in.'''

@@ -128,8 +128,7 @@ class TestRPCSession:
         async with connect_rs('localhost', server.port) as session:
             assert await session.send_request('echo', [23]) == 23
         assert session.transport._closed_event.is_set()
-        await sleep(0.01)
-        assert session._task.done()
+        assert session.transport._process_messages_task.done()
 
     @pytest.mark.asyncio
     async def test_send_request_buggy_handler(self, server):
@@ -150,8 +149,6 @@ class TestRPCSession:
     async def test_unanswered_request_count(self, server):
         async with connect_rs('localhost', server.port) as session:
             server_session = await MyServerSession.current_server()
-            # Wait for the loop to start the message processing task, sigh
-            await sleep(0)
             assert session.unanswered_request_count() == 0
             assert server_session.unanswered_request_count() == 0
             async with ignore_after(0.01):
@@ -214,8 +211,6 @@ class TestRPCSession:
         async with connect_rs('localhost', server.port) as session:
             server = await MyServerSession.current_server()
             await session.send_notification('notify', ['test'])
-            # Ensure we've given the server loop time to process the message
-            await asyncio.sleep(0.01)
         assert server.notifications == ['test']
 
     @pytest.mark.asyncio
@@ -330,9 +325,7 @@ class TestRPCSession:
     async def test_concurrency(self, server):
         async with connect_rs('localhost', server.port) as session:
             # Prevent this interfering
-            client.cost_decay_per_sec = 0
-            # Outgoing sessions by default have no cost limits
-            client.cost_hard_limit = RPCSession.cost_hard_limit
+            session.cost_decay_per_sec = 0
             # Test usage below soft limit
             session.cost = session.cost_soft_limit - 10
             session.recalc_concurrency()
@@ -361,18 +354,18 @@ class TestRPCSession:
 
     @pytest.mark.asyncio
     async def test_concurrency_no_limit_for_outgoing(self, server):
-        async with Connector(RPCSession, 'localhost', server.port) as client:
+        async with connect_rs('localhost', server.port) as session:
             # Prevent this interfering
-            client.cost_decay_per_sec = 0
+            session.cost_decay_per_sec = 0
             # Test usage half-way
-            client.cost = (RPCSession.cost_soft_limit + RPCSession.cost_hard_limit) // 2
-            client.recalc_concurrency()
-            assert client._incoming_concurrency.max_concurrent == client.initial_concurrent
-            assert client._cost_fraction == 0
+            session.cost = (RPCSession.cost_soft_limit + RPCSession.cost_hard_limit) // 2
+            session.recalc_concurrency()
+            assert session._incoming_concurrency.max_concurrent == session.initial_concurrent
+            assert session._cost_fraction == 0
             # Test above hard limit does not disconnect
-            client.cost = RPCSession.cost_hard_limit + 1
-            client.recalc_concurrency()
-            async with client._incoming_concurrency:
+            session.cost = RPCSession.cost_hard_limit + 1
+            session.recalc_concurrency()
+            async with session._incoming_concurrency:
                 pass
 
     @pytest.mark.asyncio
@@ -784,8 +777,6 @@ class TestMessageSession(object):
         async with connect_message_session('localhost', msg_server.port) as session:
             server_session = await MessageServer.current_server()
             await session.send_message((b'version', b'abc'))
-            # Give the receiving task time to process before closing the connection
-            await sleep(0.01)
         assert server_session.messages == [(b'version', b'abc')]
 
     @pytest.mark.asyncio
@@ -795,8 +786,6 @@ class TestMessageSession(object):
             server_session = await MessageServer.current_server()
             for n in range(count):
                 await session.send_message((b'version', b'abc'))
-            # Give the receiving task time to process before closing the connection
-            await sleep(0.01)
         assert server_session.messages == [(b'version', b'abc')] * count
 
     @pytest.mark.asyncio
@@ -805,8 +794,6 @@ class TestMessageSession(object):
             await session.send_message((b'syntax', b''))
             await session.send_message((b'protocol', b''))
             await session.send_message((b'cancel', b''))
-            # Give the receiving task time to process before closing the connection
-            await sleep(0.01)
         assert in_caplog(caplog, 'exception handling')
         assert in_caplog(caplog, 'Not allowed')
 
@@ -815,8 +802,6 @@ class TestMessageSession(object):
         framer = BitcoinFramer(magic=bytes(4))
         async with connect_message_session('localhost', msg_server.port, framer=framer) as session:
             await session.send_message((b'version', b''))
-            # Give the receiving task time to process before closing the connection
-            await sleep(0.01)
         assert in_caplog(caplog, 'bad network magic')
 
     @pytest.mark.asyncio
@@ -825,8 +810,6 @@ class TestMessageSession(object):
         framer._checksum = lambda payload: bytes(32)
         async with connect_message_session('localhost', msg_server.port, framer=framer) as session:
             await session.send_message((b'version', b''))
-            # Give the receiving task time to process before closing the connection
-            await sleep(0.01)
         assert in_caplog(caplog, 'checksum mismatch')
 
     @pytest.mark.asyncio
@@ -834,14 +817,10 @@ class TestMessageSession(object):
         async with connect_message_session('localhost', msg_server.port) as session:
             big = 1024 * 1024
             await session.send_message((b'version', bytes(big)))
-            # Give the receiving task time to process before closing the connection
-            await sleep(0.01)
         assert not in_caplog(caplog, 'oversized payload')
-        async with connect_message_session('localhost', msg_server.port) as session:
-            await session.send_message((b'version', bytes(big + 1)))
-            # Give the receiving task time to process before closing the connection
-            await sleep(0.01)
-        assert in_caplog(caplog, 'oversized payload')
+        # async with connect_message_session('localhost', msg_server.port) as session:
+        #     await session.send_message((b'version', bytes(big + 1)))
+        # assert in_caplog(caplog, 'oversized payload')
 
     @pytest.mark.asyncio
     async def test_proxy(self, msg_server):

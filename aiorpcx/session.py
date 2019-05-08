@@ -34,7 +34,7 @@ from math import ceil
 import time
 
 from aiorpcx.curio import (
-    TaskGroup, TaskTimeout, CancelledError, timeout_after, spawn_sync, sleep
+    TaskGroup, TaskTimeout, CancelledError, timeout_after, sleep
 )
 from aiorpcx.framing import (
     NewlineFramer, BitcoinFramer, BadMagicError, BadChecksumError, OversizedPayloadError
@@ -48,7 +48,6 @@ from aiorpcx.jsonrpc import (
 class ReplyAndDisconnect(Exception):
     '''Force a session disconnect after sending result (a Python object or an RPCError).
     '''
-
 
 class ExcessiveSessionCostError(RuntimeError):
     pass
@@ -118,7 +117,6 @@ class SessionBase:
         self.logger = logging.getLogger(self.__class__.__name__)
         # For logger.debug messsages
         self.verbosity = 0
-        self._task = spawn_sync(self._process_messages(), loop=self.loop)
         self._group = TaskGroup()
         # Statistics.  The RPC object also keeps its own statistics.
         self.start_time = time.time()
@@ -136,13 +134,6 @@ class SessionBase:
         self._cost_fraction = 0.0
         # Concurrency control for incoming request handling
         self._incoming_concurrency = Concurrency(self.initial_concurrent)
-
-    async def _process_messages(self):
-        async with self._group:
-            await self._group.spawn(self._receive_messages)
-
-    def _receive_messages(self):
-        raise NotImplementedError
 
     async def _send_message(self, message):
         if self.verbosity >= 4:
@@ -169,9 +160,7 @@ class SessionBase:
         return self.transport._kind
 
     def connection_lost(self):
-        # Cancelling directly leads to self-cancellation problems for member functions
-        # await-ing self.close()
-        self.loop.call_soon(self._task.cancel)
+        pass
 
     def data_received(self, data):
         if self.verbosity >= 2:
@@ -209,6 +198,13 @@ class SessionBase:
         if abs(target - value) > 1:
             self.logger.info(f'changing task concurrency from {value} to {target}')
         self._incoming_concurrency.set_target(target)
+
+    async def _process_messages(self, recv_message):
+        raise NotImplementedError
+
+    async def process_messages(self, recv_message):
+        async with self._group:
+            await self._group.spawn(self._process_messages, recv_message)
 
     def unanswered_request_count(self):
         '''The number of requests received but not yet answered.'''
@@ -249,14 +245,12 @@ class SessionBase:
 class MessageSession(SessionBase):
     '''Session class for protocols where messages are not tied to responses,
     such as the Bitcoin protocol.
-
-    To use as a client (connection-opening) session, pass host, port
-    and perhaps a proxy.
     '''
-    async def _receive_messages(self):
+    async def _process_messages(self, recv_message):
         while not self.is_closing():
             try:
-                message = await self.transport.receive_message()
+                print("WAITING FOR MESSAGE")
+                message = await recv_message()
             except BadMagicError as e:
                 magic, expected = e.args
                 self.logger.error(
@@ -264,7 +258,7 @@ class MessageSession(SessionBase):
                     f'disconnecting'
                 )
                 self._bump_errors(e)
-                await self.close()
+                await self._group.spawn(self.close)
             except OversizedPayloadError as e:
                 command, payload_len = e.args
                 self.logger.error(
@@ -272,7 +266,7 @@ class MessageSession(SessionBase):
                     f'{command}, disconnecting'
                 )
                 self._bump_errors(e)
-                await self.close()
+                await self._group.spawn(self.close)
             except BadChecksumError as e:
                 payload_checksum, claimed_checksum = e.args
                 self.logger.warning(
@@ -420,35 +414,14 @@ class RPCSession(SessionBase):
             self.logger.info(f'changing outgoing request concurrency to {target} from {current}')
             self._outgoing_concurrency.set_target(target)
 
-    async def _receive_messages(self):
+    async def _process_messages(self, recv_message):
         while True:
             try:
-                message = await self.transport.receive_message()
+                message = await recv_message()
             except MemoryError as e:
                 self.logger.warning(f'{e!r}')
                 continue
 
-            self.last_recv = time.time()
-            self.recv_count += 1
-            if self.log_me:
-                self.logger.info(f'processing {message}')
-
-            try:
-                requests = self.connection.receive_message(message)
-            except ProtocolError as e:
-                self.logger.debug(str(e))
-                if e.code == JSONRPC.PARSE_ERROR:
-                    e.cost = self.error_base_cost * 10
-                self._bump_errors(e)
-                if e.error_message:
-                    await self._send_message(e.error_message)
-            else:
-                for request in requests:
-                    await self._group.spawn(self._throttled_request(request))
-
-    async def process_messages(self, recv_message):
-        while True:
-            message = await recv_message()
             self.last_recv = time.time()
             self.recv_count += 1
             if self.log_me:
@@ -474,8 +447,6 @@ class RPCSession(SessionBase):
             timeout = self.processing_timeout
             async with timeout_after(timeout):
                 async with self._incoming_concurrency:
-                    if self.is_closing():
-                        return
                     if self._cost_fraction:
                         await sleep(self._cost_fraction * self.cost_sleep)
                     result = await self.handle_request(request)

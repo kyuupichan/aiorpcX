@@ -26,7 +26,8 @@
 '''RPC message framing in a byte stream.'''
 
 __all__ = ('FramerBase', 'NewlineFramer', 'BinaryFramer', 'BitcoinFramer',
-           'OversizedPayloadError', 'BadChecksumError', 'BadMagicError')
+           'OversizedPayloadError', 'BadChecksumError', 'BadMagicError',
+           'ConnectionLostError')
 
 from hashlib import sha256 as _sha256
 from struct import Struct
@@ -34,7 +35,11 @@ from struct import Struct
 from .curio import Queue
 
 
-class FramerBase(object):
+class ConnectionLostError(Exception):
+    pass
+
+
+class FramerBase:
     '''Abstract base class for a framer.
 
     A framer breaks an incoming byte stream into protocol messages,
@@ -84,6 +89,8 @@ class NewlineFramer(FramerBase):
             self.residual = b''
             if not part:
                 part = await self.queue.get()
+                if part is None:
+                    raise ConnectionLostError()
 
             npos = part.find(b'\n')
             if npos == -1:
@@ -119,6 +126,8 @@ class ByteQueue(object):
     async def receive(self, size):
         while self.parts_len < size:
             part = await self.queue.get()
+            if part is None:
+                raise ConnectionLostError()
             self.parts.append(part)
             self.parts_len += len(part)
         self.parts_len -= size
