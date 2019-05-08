@@ -239,20 +239,19 @@ class TestRPCSession:
             session.verbosity = 4
             with caplog.at_level(logging.DEBUG):
                 await session.send_request('echo', ['wait'])
-            assert in_caplog(caplog, "Sending framed message b'{")
-            assert in_caplog(caplog, "Received framed message b'{")
+            assert in_caplog(caplog, "sending message b'{")
+            assert in_caplog(caplog, "received data b'{")
 
     @pytest.mark.asyncio
     async def test_framer_MemoryError(self, server, caplog):
-        factory = partial(RPCSession, framer=NewlineFramer(5))
-        async with connect_rs('localhost', server.port, session_factory=factory) as session:
+        async with connect_rs('localhost', server.port, framer=NewlineFramer(5)) as session:
             msg = 'w' * 50
             raw_msg = msg.encode()
             # Even though long it will be sent in one bit
             request = session.send_request('echo', [msg])
             assert await request == msg
             assert not caplog.records
-            session.data_received(raw_msg)  # Unframed; no \n
+            session.transport.data_received(raw_msg)  # Unframed; no \n
             await sleep(0)
             assert len(caplog.records) == 1
             assert in_caplog(caplog, 'dropping message over 5 bytes')
@@ -308,7 +307,7 @@ class TestRPCSession:
             task = await spawn(monitor)
             for msg in msgs:
                 await session._send_message(msg)
-            assert called == [session.framer.frame(msg) for msg in msgs]
+            assert called == [session.transport._framer.frame(msg) for msg in msgs]
             limit = None
             # Check idempotent
             protocol.resume_writing()
@@ -580,7 +579,7 @@ class WireRPCSession(RPCSession):
         await self._send_message(item)
 
     async def response(self):
-        message = await self.framer.receive_message()
+        message = await self.transport.receive_message()
         return json.loads(message.decode())
 
 
@@ -774,8 +773,8 @@ def msg_server(event_loop, unused_tcp_port):
     event_loop.run_until_complete(close_all())
 
 
-def connect_message_session(host, port, proxy=None):
-    return connect_rs(host, port, proxy=proxy, session_factory=MessageSession)
+def connect_message_session(host, port, proxy=None, framer=None):
+    return connect_rs(host, port, proxy=proxy, framer=framer, session_factory=MessageSession)
 
 
 class TestMessageSession(object):
@@ -813,20 +812,19 @@ class TestMessageSession(object):
 
     @pytest.mark.asyncio
     async def test_bad_magic(self, msg_server, caplog):
-        async with connect_message_session('localhost', msg_server.port) as session:
-            msg = bytearray(session.framer.frame((b'version', b'')))
-            msg[0] = msg[0] ^ 1
-            await session.transport.write(msg)
+        framer = BitcoinFramer(magic=bytes(4))
+        async with connect_message_session('localhost', msg_server.port, framer=framer) as session:
+            await session.send_message((b'version', b''))
             # Give the receiving task time to process before closing the connection
             await sleep(0.01)
         assert in_caplog(caplog, 'bad network magic')
 
     @pytest.mark.asyncio
     async def test_bad_checksum(self, msg_server, caplog):
-        async with connect_message_session('localhost', msg_server.port) as session:
-            msg = bytearray(session.framer.frame((b'version', b'')))
-            msg[-1] = msg[-1] ^ 1
-            await session.transport.write(msg)
+        framer = BitcoinFramer()
+        framer._checksum = lambda payload: bytes(32)
+        async with connect_message_session('localhost', msg_server.port, framer=framer) as session:
+            await session.send_message((b'version', b''))
             # Give the receiving task time to process before closing the connection
             await sleep(0.01)
         assert in_caplog(caplog, 'checksum mismatch')

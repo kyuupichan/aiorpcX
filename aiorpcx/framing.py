@@ -187,6 +187,10 @@ class OversizedPayloadError(Exception):
     cost = 500
 
 
+BITCOIN_MAGIC = bytes.fromhex('e3e1f3e8')
+MAX_BLOCK_SIZE = 128_000_000
+
+
 class BitcoinFramer(BinaryFramer):
     '''Provides a framer of binary message payloads in the style of the
     Bitcoin network protocol.
@@ -204,7 +208,7 @@ class BitcoinFramer(BinaryFramer):
     Wait on receive_message() to get incoming (command, payload) pairs.
     '''
 
-    def __init__(self, magic, max_block_size):
+    def __init__(self, magic=BITCOIN_MAGIC, max_block_size=MAX_BLOCK_SIZE):
         def pad_command(command):
             fill = 12 - len(command)
             if fill < 0:

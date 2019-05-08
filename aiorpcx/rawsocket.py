@@ -38,7 +38,7 @@ from aiorpcx.util import NetAddress
 
 class RSTransport(asyncio.Protocol):
 
-    def __init__(self, session_factory, kind):
+    def __init__(self, session_factory, framer, kind):
         self.session_factory = session_factory
         self.loop = asyncio.get_event_loop()
         self.session = None
@@ -46,6 +46,7 @@ class RSTransport(asyncio.Protocol):
         self._proxy = None
         self._asyncio_transport = None
         self._remote_address = None
+        self._framer = framer
         # Cleared when the send socket is full
         self._can_send = Event()
         self._can_send.set()
@@ -54,14 +55,14 @@ class RSTransport(asyncio.Protocol):
 
     async def process_messages(self):
         try:
-            await self.session.process_messages(self.recv_message)
+            await self.session.process_messages(self.receive_message)
         except ConnectionError:
             pass
         finally:
             self.session.connection_lost()
 
-    async def recv_message(self):
-        pass
+    async def receive_message(self):
+        return await self._framer.receive_message()
 
     def connection_made(self, transport):
         '''Called by asyncio when a connection is established.'''
@@ -73,6 +74,7 @@ class RSTransport(asyncio.Protocol):
             peername = transport.get_extra_info('peername')
             self._remote_address = NetAddress(peername[0], peername[1])
         self.session = self.session_factory(self)
+        self._framer = self._framer or self.session.default_framer()
         #if self.kind == 'server':
         #    self._server_task = self.loop.create_task(self.process_messages())
 
@@ -91,6 +93,7 @@ class RSTransport(asyncio.Protocol):
     def data_received(self, data):
         '''Called by asyncio when a message comes in.'''
         self.session.data_received(data)
+        self._framer.received_bytes(data)
 
     def pause_writing(self):
         '''Called by asyncio the send buffer is full.'''
@@ -105,9 +108,10 @@ class RSTransport(asyncio.Protocol):
             self._asyncio_transport.resume_reading()
 
     # API exposed to session
-    async def write(self, framed_message):
+    async def write(self, message):
         await self._can_send.wait()
         if not self.is_closing():
+            framed_message = self._framer.frame(message)
             self._asyncio_transport.write(framed_message)
 
     async def close(self, force_after):
@@ -138,9 +142,9 @@ class RSTransport(asyncio.Protocol):
 
 class RSClient:
 
-    def __init__(self, host=None, port=None, proxy=None, **kwargs):
+    def __init__(self, host=None, port=None, proxy=None, *, framer=None, **kwargs):
         session_factory = kwargs.pop('session_factory', RPCSession)
-        self.protocol_factory = partial(RSTransport, session_factory, 'client')
+        self.protocol_factory = partial(RSTransport, session_factory, framer, 'client')
         self.host = host
         self.port = port
         self.proxy = proxy
@@ -169,12 +173,12 @@ class RSClient:
 class Server:
     '''A simple wrapper around an asyncio.Server object.'''
 
-    def __init__(self, session_factory, host=None, port=None, *, loop=None, **kwargs):
+    def __init__(self, session_factory, host=None, port=None, *, framer=None, loop=None, **kwargs):
         self.host = host
         self.port = port
         self.loop = loop or asyncio.get_event_loop()
         self.server = None
-        self._protocol_factory = partial(RSTransport, session_factory, 'server')
+        self._protocol_factory = partial(RSTransport, session_factory, framer, 'server')
         self._kwargs = kwargs
 
     async def listen(self):

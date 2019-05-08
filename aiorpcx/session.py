@@ -112,9 +112,8 @@ class SessionBase:
     # Force-close a connection if its socket send buffer stays full this long
     max_send_delay = 20.0
 
-    def __init__(self, transport, *, framer=None, loop=None):
+    def __init__(self, transport, *, loop=None):
         self.transport = transport
-        self.framer = framer or self.default_framer()
         self.loop = loop or asyncio.get_event_loop()
         self.logger = logging.getLogger(self.__class__.__name__)
         # For logger.debug messsages
@@ -146,17 +145,16 @@ class SessionBase:
         raise NotImplementedError
 
     async def _send_message(self, message):
-        framed_message = self.framer.frame(message)
         if self.verbosity >= 4:
-            self.logger.debug(f'Sending framed message {framed_message}')
+            self.logger.debug(f'sending message {message}')
         try:
             async with timeout_after(self.max_send_delay):
-                await self.transport.write(framed_message)
+                await self.transport.write(message)
         except TaskTimeout:
             await self.abort()
             raise
-        self.send_size += len(framed_message)
-        self.bump_cost(len(framed_message) * self.bw_cost_per_byte)
+        self.send_size += len(message)
+        self.bump_cost(len(message) * self.bw_cost_per_byte)
         self.send_count += 1
         self.last_send = time.time()
         return self.last_send
@@ -175,12 +173,11 @@ class SessionBase:
         # await-ing self.close()
         self.loop.call_soon(self._task.cancel)
 
-    def data_received(self, framed_message):
-        if self.verbosity >= 4:
-            self.logger.debug(f'Received framed message {framed_message}')
-        self.recv_size += len(framed_message)
-        self.bump_cost(len(framed_message) * self.bw_cost_per_byte)
-        self.framer.received_bytes(framed_message)
+    def data_received(self, data):
+        if self.verbosity >= 2:
+            self.logger.debug(f'received data {data}')
+        self.recv_size += len(data)
+        self.bump_cost(len(data) * self.bw_cost_per_byte)
 
     def bump_cost(self, delta):
         # Delta can be positive or negative
@@ -259,7 +256,7 @@ class MessageSession(SessionBase):
     async def _receive_messages(self):
         while not self.is_closing():
             try:
-                message = await self.framer.receive_message()
+                message = await self.transport.receive_message()
             except BadMagicError as e:
                 magic, expected = e.args
                 self.logger.error(
@@ -311,10 +308,9 @@ class MessageSession(SessionBase):
             self.logger.exception(f'exception handling {message}')
             self._bump_errors()
 
-    # External API
     def default_framer(self):
         '''Return a bitcoin framer.'''
-        return BitcoinFramer(bytes.fromhex('e3e1f3e8'), 128_000_000)
+        return BitcoinFramer()
 
     async def handle_message(self, message):
         '''message is a (command, payload) pair.'''
@@ -405,8 +401,8 @@ class RPCSession(SessionBase):
     sent_request_timeout = 30.0
     log_me = False
 
-    def __init__(self, transport, *, framer=None, loop=None, connection=None):
-        super().__init__(transport, framer=framer, loop=loop)
+    def __init__(self, transport, *, loop=None, connection=None):
+        super().__init__(transport, loop=loop)
         self.connection = connection or self.default_connection()
         # Concurrency control for outgoing request sending
         self._outgoing_concurrency = Concurrency(50)
@@ -427,7 +423,7 @@ class RPCSession(SessionBase):
     async def _receive_messages(self):
         while True:
             try:
-                message = await self.framer.receive_message()
+                message = await self.transport.receive_message()
             except MemoryError as e:
                 self.logger.warning(f'{e!r}')
                 continue
