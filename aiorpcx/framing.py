@@ -26,17 +26,12 @@
 '''RPC message framing in a byte stream.'''
 
 __all__ = ('FramerBase', 'NewlineFramer', 'BinaryFramer', 'BitcoinFramer',
-           'OversizedPayloadError', 'BadChecksumError', 'BadMagicError',
-           'ConnectionLostError')
+           'OversizedPayloadError', 'BadChecksumError', 'BadMagicError', )
 
 from hashlib import sha256 as _sha256
 from struct import Struct
 
 from .curio import Queue
-
-
-class ConnectionLostError(Exception):
-    pass
 
 
 class FramerBase:
@@ -59,6 +54,10 @@ class FramerBase:
         '''Wait for a complete unframed message to arrive, and return it.'''
         raise NotImplementedError
 
+    def fail(self, exception):
+        '''Raise exception to receive_message.'''
+        raise NotImplementedError
+
 
 class NewlineFramer(FramerBase):
     '''A framer for a protocol where messages are separated by newlines.'''
@@ -77,9 +76,14 @@ class NewlineFramer(FramerBase):
         self.received_bytes = self.queue.put_nowait
         self.synchronizing = False
         self.residual = b''
+        self.exception = None
 
     def frame(self, message):
         return message + b'\n'
+
+    def fail(self, exception):
+        self.exception = exception
+        self.received_bytes(b'')
 
     async def receive_message(self):
         parts = []
@@ -89,8 +93,8 @@ class NewlineFramer(FramerBase):
             self.residual = b''
             if not part:
                 part = await self.queue.get()
-                if part is None:
-                    raise ConnectionLostError()
+                if self.exception:
+                    raise self.exception
 
             npos = part.find(b'\n')
             if npos == -1:
@@ -122,12 +126,19 @@ class ByteQueue(object):
         self.parts = []
         self.parts_len = 0
         self.put_nowait = self.queue.put_nowait
+        self.exception = None
+
+    def fail(self, exception):
+        self.exception = exception
+        self.put_nowait(b'')
 
     async def receive(self, size):
+        if self.exception:
+            raise self.exception
         while self.parts_len < size:
             part = await self.queue.get()
-            if part is None:
-                raise ConnectionLostError()
+            if self.exception:
+                raise self.exception
             self.parts.append(part)
             self.parts_len += len(part)
         self.parts_len -= size
@@ -143,6 +154,7 @@ class BinaryFramer(object):
         self.byte_queue = ByteQueue()
         self.message_queue = Queue()
         self.received_bytes = self.byte_queue.put_nowait
+        self.fail = self.byte_queue.fail
 
     def frame(self, message):
         command, payload = message
@@ -216,6 +228,7 @@ class BitcoinFramer(BinaryFramer):
     Pass incoming network bytes to received_bytes().
     Wait on receive_message() to get incoming (command, payload) pairs.
     '''
+    max_payload_size = 2_000_000
 
     def __init__(self, magic=BITCOIN_MAGIC, max_block_size=MAX_BLOCK_SIZE):
         def pad_command(command):
@@ -247,7 +260,8 @@ class BitcoinFramer(BinaryFramer):
         if magic != self._magic:
             raise BadMagicError(magic, self._magic)
         command = command.rstrip(b'\0')
-        if payload_len > 1024 * 1024:
+        if payload_len > self.max_payload_size:
             if command != b'block' or payload_len > self._max_block_size:
+                # Might be better to remove the payload
                 raise OversizedPayloadError(command, payload_len)
         return command, payload_len, checksum

@@ -247,9 +247,8 @@ class MessageSession(SessionBase):
     such as the Bitcoin protocol.
     '''
     async def _process_messages(self, recv_message):
-        while not self.is_closing():
+        while True:
             try:
-                print("WAITING FOR MESSAGE")
                 message = await recv_message()
             except BadMagicError as e:
                 magic, expected = e.args
@@ -259,6 +258,7 @@ class MessageSession(SessionBase):
                 )
                 self._bump_errors(e)
                 await self._group.spawn(self.close)
+                await sleep(0.001)
             except OversizedPayloadError as e:
                 command, payload_len = e.args
                 self.logger.error(
@@ -267,6 +267,7 @@ class MessageSession(SessionBase):
                 )
                 self._bump_errors(e)
                 await self._group.spawn(self.close)
+                await sleep(0.001)
             except BadChecksumError as e:
                 payload_checksum, claimed_checksum = e.args
                 self.logger.warning(

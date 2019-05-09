@@ -814,13 +814,13 @@ class TestMessageSession(object):
 
     @pytest.mark.asyncio
     async def test_oversized_message(self, msg_server, caplog):
+        big = BitcoinFramer.max_payload_size
         async with connect_message_session('localhost', msg_server.port) as session:
-            big = 1024 * 1024
             await session.send_message((b'version', bytes(big)))
         assert not in_caplog(caplog, 'oversized payload')
-        # async with connect_message_session('localhost', msg_server.port) as session:
-        #     await session.send_message((b'version', bytes(big + 1)))
-        # assert in_caplog(caplog, 'oversized payload')
+        async with connect_message_session('localhost', msg_server.port) as session:
+            await session.send_message((b'version', bytes(big + 1)))
+        assert in_caplog(caplog, 'oversized payload')
 
     @pytest.mark.asyncio
     async def test_proxy(self, msg_server):

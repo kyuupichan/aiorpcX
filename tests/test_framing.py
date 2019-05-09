@@ -115,14 +115,10 @@ async def test_ByteQueue():
     assert bq.parts_len == 0
 
 
-def BCH_framer():
-    return BitcoinFramer(bytes.fromhex('e3e1f3e8'), 2 * 1024 * 1024)
-
-
 class TestBitcoinFramer():
 
     def test_framing(self):
-        framer = BCH_framer()
+        framer = BitcoinFramer()
         result = framer.frame((b'version', b'payload'))
         assert result == b'\xe3\xe1\xf3\xe8version\x00\x00\x00\x00\x00'  \
             b'\x07\x00\x00\x00\xe7\x871\xbbpayload'
@@ -138,32 +134,33 @@ class TestBitcoinFramer():
             await framer._receive_header()
 
     def test_oversized_command(self):
-        framer = BCH_framer()
+        framer = BitcoinFramer()
         with pytest.raises(ValueError):
             framer._build_header(bytes(13), b'')
 
     @pytest.mark.asyncio
     async def test_oversized_message(self):
-        framer = BCH_framer()
-        max_size = framer._max_block_size
-        header = framer._build_header(b'', bytes(1024 * 1024))
+        framer = BitcoinFramer()
+        framer.max_payload_size = 2000
+        framer._max_block_size = 10000
+        header = framer._build_header(b'', bytes(framer.max_payload_size))
         framer.received_bytes(header)
         await framer._receive_header()
-        header = framer._build_header(b'', bytes(1024 * 1024 + 1))
+        header = framer._build_header(b'', bytes(framer.max_payload_size + 1))
         framer.received_bytes(header)
         with pytest.raises(OversizedPayloadError):
             await framer._receive_header()
-        header = framer._build_header(b'block', bytes(max_size))
+        header = framer._build_header(b'block', bytes(framer._max_block_size))
         framer.received_bytes(header)
         await framer._receive_header()
-        header = framer._build_header(b'block', bytes(max_size + 1))
+        header = framer._build_header(b'block', bytes(framer._max_block_size + 1))
         framer.received_bytes(header)
         with pytest.raises(OversizedPayloadError):
             await framer._receive_header()
 
     @pytest.mark.asyncio
     async def test_receive_message(self):
-        framer = BCH_framer()
+        framer = BitcoinFramer()
         result = framer.frame((b'version', b'payload'))
         framer.received_bytes(result)
 
@@ -173,7 +170,7 @@ class TestBitcoinFramer():
 
     @pytest.mark.asyncio
     async def test_bad_magic(self):
-        framer = BCH_framer()
+        framer = BitcoinFramer()
         good_msg = framer.frame((b'version', b'payload'))
         pos = random.randrange(0, 24)
 
@@ -188,7 +185,7 @@ class TestBitcoinFramer():
 
     @pytest.mark.asyncio
     async def test_bad_checksum(self):
-        framer = BCH_framer()
+        framer = BitcoinFramer()
         good_msg = framer.frame((b'version', b'payload'))
 
         pos = random.randrange(0, len(good_msg))

@@ -32,9 +32,12 @@ import asyncio
 from functools import partial
 
 from aiorpcx.curio import Event, timeout_after, TaskTimeout
-from aiorpcx.framing import ConnectionLostError
 from aiorpcx.session import RPCSession, SessionBase
 from aiorpcx.util import NetAddress
+
+
+class ConnectionLostError(Exception):
+    pass
 
 
 class RSTransport(asyncio.Protocol):
@@ -88,7 +91,7 @@ class RSTransport(asyncio.Protocol):
             return
         # Release waiting tasks
         self._can_send.set()
-        self._framer.received_bytes(None)
+        self._framer.fail(ConnectionLostError())
 
     def data_received(self, data):
         '''Called by asyncio when a message comes in.'''
