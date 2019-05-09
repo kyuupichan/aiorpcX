@@ -50,6 +50,7 @@ class ReplyAndDisconnect(Exception):
     '''Force a session disconnect after sending result (a Python object or an RPCError).
     '''
 
+
 class ExcessiveSessionCostError(RuntimeError):
     pass
 

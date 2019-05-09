@@ -172,40 +172,10 @@ class RSClient:
         await self.session.close()
 
 
-class Server:
-    '''A simple wrapper around an asyncio.Server object.'''
-
-    def __init__(self, session_factory, host=None, port=None, *, framer=None, loop=None, **kwargs):
-        self.host = host
-        self.port = port
-        self.loop = loop or asyncio.get_event_loop()
-        self.server = None
-        self._protocol_factory = partial(RSTransport, session_factory, framer,
-                                        SessionKind.SERVER)
-        self._kwargs = kwargs
-
-    async def listen(self):
-        self.server = await self.loop.create_server(
-            self._protocol_factory, self.host, self.port, **self._kwargs)
-
-    async def close(self):
-        '''Close the listening socket.  This does not close any ServerSession
-        objects created to handle incoming connections.
-        '''
-        if self.server:
-            self.server.close()
-            await self.server.wait_closed()
-            self.server = None
-
-
-async def serve_rs(session_factory, *args, **kwargs):
-    # loop = loop or asyncio.get_event_loop()
-    # server = await loop.create_server(create_protocol, *args, **kwargs)
-    # await server.listen()
-    # return server
-    server = Server(session_factory, *args, **kwargs)
-    await server.listen()
-    return server
+async def serve_rs(session_factory, host=None, port=None, *, framer=None, loop=None, **kwargs):
+    loop = loop or asyncio.get_event_loop()
+    protocol_factory = partial(RSTransport, session_factory, framer, SessionKind.SERVER)
+    return await loop.create_server(protocol_factory, host, port, **kwargs)
 
 
 connect_rs = RSClient
