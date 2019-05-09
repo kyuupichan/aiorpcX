@@ -23,8 +23,8 @@ class ServerSession(aiorpcx.RPCSession):
         super().__init__(*args, **kwargs)
         print(f'connection from {self.remote_address()}')
 
-    def connection_lost(self):
-        super().connection_lost()
+    async def connection_lost(self):
+        await super().connection_lost()
         print(f'{self.remote_address()} disconnected')
 
     async def handle_request(self, request):

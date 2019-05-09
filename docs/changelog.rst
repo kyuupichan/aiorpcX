@@ -1,8 +1,35 @@
 ChangeLog
 =========
 
-.. note:: The aiorpcX API changes regularly and is still unstable
+.. note:: The aiorpcX API changes regularly and is still unstable.  I hope to finalize it
+          for a 1.0 release in the coming months.
 
+
+Version 0.18.0 (09 May 2020)
+----------------------------
+
+* Add *websocket* support as client and server by using Aymeric Augustin's excellent
+  `websockets <https://github.com/aaugustin/websockets/>`_ package.
+
+  Unfortunately this required changing several APIs.  The code now distinguishes the
+  previous TCP and SSL based-connections as *raw sockets* from the new websockets.  The
+  old Connector and Server classes are gone.  Use `connect_rs()` and `serve_rs()` to
+  connect a client and start a server for raw sockets; and `connect_ws()` and `serve_ws()`
+  to do the same for websockets.
+
+  SessionBase no longer inherits `asyncio.Protocol` as it is now transport-independent.
+  Sessions no longer take a framer in their constructor: websocket messages are already
+  framed, so instead a framer is passed to `connect_rs()` and `serve_rs()` if the default
+  `NewlineFramer` is not wanted.
+
+  A session is only instantiated when a connection handshake is completed, so
+  `connection_made()` is no longer a method.  `connection_lost()` and `abort()` are now
+  coroutines; if overriding either be sure to call the base class implementation.
+
+  `is_send_buffer_full()` was removed.
+* Updated and added new examples
+* JSON RPC message handling was made more efficient by using futures instead of events
+  internally
 
 Version 0.17.0 (22 Apr 2020)
 ----------------------------

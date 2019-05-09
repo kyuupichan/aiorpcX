@@ -2,8 +2,8 @@ import asyncio
 import aiorpcx
 
 
-async def connect(host, port):
-    async with aiorpcx.connect(host, port) as session:
+async def main(host, port):
+    async with aiorpcx.connect_rs(host, port) as session:
         # A good request with standard argument passing
         result = await session.send_request('echo', ["Howdy"])
         print(result)
@@ -37,4 +37,4 @@ async def connect(host, port):
             print(f'batch result #{n}: {result}')
 
 
-asyncio.get_event_loop().run_until_complete(connect('localhost', 8888))
+asyncio.get_event_loop().run_until_complete(main('localhost', 8888))

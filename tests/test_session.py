@@ -39,8 +39,8 @@ class MyServerSession(RPCSession):
         await sleep(0)
         return self.sessions[0]
 
-    def connection_lost(self):
-        super().connection_lost()
+    async def connection_lost(self):
+        await super().connection_lost()
         self.sessions.remove(self)
 
     async def handle_request(self, request):
@@ -752,8 +752,8 @@ class MessageServer(MessageSession):
         await sleep(0.001)
         return self._current_session
 
-    def connection_lost(self):
-        super().connection_lost()
+    async def connection_lost(self):
+        await super().connection_lost()
         MessageServer._current_session = None
 
     async def handle_message(self, message):

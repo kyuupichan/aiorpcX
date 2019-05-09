@@ -169,7 +169,7 @@ class SessionBase:
         '''Either client or server.'''
         return self.transport.kind
 
-    def connection_lost(self):
+    async def connection_lost(self):
         pass
 
     def data_received(self, data):
@@ -502,8 +502,8 @@ class RPCSession(SessionBase):
                 if len(self._req_times) >= self.recalibrate_count:
                     self._recalc_concurrency()
 
-    def connection_lost(self):
-        super().connection_lost()
+    async def connection_lost(self):
+        await super().connection_lost()
         # Cancel pending requests and message processing
         self.connection.cancel_pending_requests()
 

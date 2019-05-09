@@ -23,8 +23,8 @@ class ServerSession(aiorpcx.RPCSession):
         super().__init__(*args, **kwargs)
         print(f'connection from {self.remote_address()}')
 
-    def connection_lost(self):
-        super().connection_lost()
+    async def connection_lost(self):
+        await super().connection_lost()
         print(f'{self.remote_address()} disconnected')
 
     async def handle_request(self, request):
@@ -34,5 +34,5 @@ class ServerSession(aiorpcx.RPCSession):
 
 
 loop = asyncio.get_event_loop()
-loop.run_until_complete(aiorpcx.serve(ServerSession, 'localhost', 8888))
+loop.run_until_complete(aiorpcx.serve_rs(ServerSession, 'localhost', 8888))
 loop.run_forever()
