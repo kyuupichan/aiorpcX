@@ -140,6 +140,9 @@ class SessionBase:
         self._cost_fraction = 0.0
         # Concurrency control for incoming request handling
         self._incoming_concurrency = Concurrency(self.initial_concurrent)
+        # By default, do not limit outgoing connections
+        if self.session_kind == SessionKind.CLIENT:
+            self.cost_hard_limit = 0
 
     async def _send_message(self, message):
         if self.verbosity >= 4:

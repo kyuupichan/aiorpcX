@@ -155,8 +155,6 @@ class RSClient:
         self.session = None
         self.loop = kwargs.get('loop', asyncio.get_event_loop())
         self.kwargs = kwargs
-        # By default, do not limit outgoing connections
-        self.cost_hard_limit = 0
 
     async def create_connection(self):
         '''Initiate a connection.'''

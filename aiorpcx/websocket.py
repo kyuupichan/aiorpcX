@@ -102,8 +102,6 @@ class WSClient:
         websocket = await websockets.connect(self.uri, **self.kwargs)
         self.transport = WSTransport(websocket, self.session_factory, 'client')
         self.process_messages_task = await spawn(self.transport.process_messages())
-        # FIXME
-        self.transport.session.cost_hard_limit = 0
         return self.transport.session
 
     async def __aexit__(self, exc_type, exc_value, traceback):

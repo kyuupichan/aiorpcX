@@ -109,9 +109,9 @@ class TestSessionBase:
 
     @pytest.mark.asyncio
     async def test_abstract(self):
-        s = SessionBase(None)
+        s = SessionBase
         with pytest.raises(NotImplementedError):
-            await s._process_messages(None)
+            await s._process_messages(None, None)
 
 
 class TestRPCSession:
@@ -335,6 +335,9 @@ class TestRPCSession:
     @pytest.mark.asyncio
     async def test_concurrency(self, server):
         async with connect_rs('localhost', server.port) as session:
+            # By default clients don't have a hard limit
+            assert session.cost_hard_limit == 0
+            session.cost_hard_limit = session.cost_soft_limit * 2
             # Prevent this interfering
             session.cost_decay_per_sec = 0
             # Test usage below soft limit
@@ -386,7 +389,7 @@ class TestRPCSession:
             session.cost = 1000
             await sleep(0.01)
             session.recalc_concurrency()
-            assert 995 < session.cost < 999.01
+            assert 995 < session.cost < 999.1
 
     @pytest.mark.asyncio
     async def test_concurrency_hard_limit_0(self, server):
@@ -399,6 +402,9 @@ class TestRPCSession:
     @pytest.mark.asyncio
     async def test_extra_cost(self, server):
         async with connect_rs('localhost', server.port) as session:
+            # By default clients don't have a hard limit
+            assert session.cost_hard_limit == 0
+            session.cost_hard_limit = session.cost_soft_limit * 2
             session.extra_cost = lambda: session.cost_soft_limit + 1
             session.recalc_concurrency()
             assert 1 > session._cost_fraction > 0
