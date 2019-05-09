@@ -432,7 +432,7 @@ class TestRPCSession:
             t1 = time.time()
             await session.send_request('echo', [23])
             t2 = time.time()
-            assert t2 - t1 > server.cost_sleep / 2
+            assert t2 - t1 > (server.cost_sleep / 2) * 0.9  # Fudge factor for Linux
 
     @pytest.mark.asyncio
     async def test_server_busy(self, server_port):
