@@ -29,7 +29,7 @@ from functools import partial
 import websockets
 
 from aiorpcx.curio import spawn
-from aiorpcx.session import RPCSession
+from aiorpcx.session import RPCSession, SessionKind
 from aiorpcx.util import NetAddress
 
 
@@ -46,14 +46,14 @@ class WSTransport:
 
     @classmethod
     async def ws_server(cls, session_factory, websocket, _path):
-        transport = cls(websocket, session_factory, 'server')
+        transport = cls(websocket, session_factory, SessionKind.SERVER)
         await transport.process_messages()
 
     @classmethod
     async def ws_client(cls, uri, **kwargs):
         session_factory = kwargs.pop('session_factory', RPCSession)
         websocket = await websockets.connect(uri, **kwargs)
-        return cls(websocket, session_factory, 'client')
+        return cls(websocket, session_factory, SessionKind.CLIENT)
 
     async def process_messages(self):
         try:

@@ -16,6 +16,8 @@ async def test_FramerBase():
         await framer.receive_message()
     with pytest.raises(NotImplementedError):
         framer.frame(b'')
+    with pytest.raises(NotImplementedError):
+        framer.frame(TypeError)
 
 
 def test_NewlineFramer_framing():

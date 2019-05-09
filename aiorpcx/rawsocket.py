@@ -32,7 +32,7 @@ import asyncio
 from functools import partial
 
 from aiorpcx.curio import Event, timeout_after, TaskTimeout
-from aiorpcx.session import RPCSession, SessionBase
+from aiorpcx.session import RPCSession, SessionBase, SessionKind
 from aiorpcx.util import NetAddress
 
 
@@ -147,7 +147,8 @@ class RSClient:
 
     def __init__(self, host=None, port=None, proxy=None, *, framer=None, **kwargs):
         session_factory = kwargs.pop('session_factory', RPCSession)
-        self.protocol_factory = partial(RSTransport, session_factory, framer, 'client')
+        self.protocol_factory = partial(RSTransport, session_factory, framer,
+                                        SessionKind.CLIENT)
         self.host = host
         self.port = port
         self.proxy = proxy
@@ -181,7 +182,8 @@ class Server:
         self.port = port
         self.loop = loop or asyncio.get_event_loop()
         self.server = None
-        self._protocol_factory = partial(RSTransport, session_factory, framer, 'server')
+        self._protocol_factory = partial(RSTransport, session_factory, framer,
+                                        SessionKind.SERVER)
         self._kwargs = kwargs
 
     async def listen(self):

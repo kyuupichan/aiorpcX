@@ -25,10 +25,11 @@
 
 
 __all__ = ('RPCSession', 'MessageSession', 'ExcessiveSessionCostError',
-           'BatchError', 'Concurrency', 'ReplyAndDisconnect')
+           'BatchError', 'Concurrency', 'ReplyAndDisconnect', 'SessionKind')
 
 
 import asyncio
+from enum import Enum
 import logging
 from math import ceil
 import time
@@ -83,6 +84,11 @@ class Concurrency:
             self._sem_value -= 1
         else:
             self._semaphore.release()
+
+
+class SessionKind(Enum):
+    CLIENT = 'client'
+    SERVER = 'server'
 
 
 class SessionBase:

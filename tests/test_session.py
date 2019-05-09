@@ -9,7 +9,7 @@ from functools import partial
 import pytest
 
 from aiorpcx import *
-from aiorpcx.session import Concurrency
+from aiorpcx.session import Concurrency, SessionBase
 from util import RaiseTest
 
 
@@ -32,6 +32,7 @@ class MyServerSession(RPCSession):
         super().__init__(*args, **kwargs)
         self.notifications = []
         self.sessions.append(self)
+        assert self.session_kind == SessionKind.SERVER
 
     @classmethod
     async def current_server(self):
@@ -104,6 +105,15 @@ def server(unused_tcp_port, event_loop):
     event_loop.run_until_complete(close_all())
 
 
+class TestSessionBase:
+
+    @pytest.mark.asyncio
+    async def test_abstract(self):
+        s = SessionBase(None)
+        with pytest.raises(NotImplementedError):
+            await s._process_messages(None)
+
+
 class TestRPCSession:
 
     @pytest.mark.asyncio
@@ -117,6 +127,7 @@ class TestRPCSession:
     async def test_handlers(self, server):
         async with timeout_after(0.1):
             async with connect_rs('localhost', server.port) as session:
+                assert session.session_kind == SessionKind.CLIENT
                 assert session.proxy() is None
                 with raises_method_not_found('something'):
                     await session.send_request('something')
