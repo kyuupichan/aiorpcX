@@ -56,9 +56,14 @@ class WSTransport:
         websocket = await websockets.connect(uri, **kwargs)
         return cls(websocket, session_factory, SessionKind.CLIENT)
 
+    async def recv_message(self):
+        message = await self.websocket.recv()
+        self.session.data_received(message)
+        return message
+
     async def process_messages(self):
         try:
-            await self.session.process_messages(self.websocket.recv)
+            await self.session.process_messages(self.recv_message)
         except websockets.ConnectionClosed:
             pass
         finally:
