@@ -46,7 +46,7 @@ class RSTransport(asyncio.Protocol):
         self.session_factory = session_factory
         self.loop = asyncio.get_event_loop()
         self.session = None
-        self._kind = kind
+        self.kind = kind
         self._proxy = None
         self._asyncio_transport = None
         self._remote_address = None

@@ -41,8 +41,9 @@ class WSTransport:
 
     def __init__(self, websocket, session_factory, kind):
         self.websocket = websocket
-        self.session = session_factory(self)
         self.kind = kind
+        self.session = session_factory(self)
+        self.closing = False
 
     @classmethod
     async def ws_server(cls, session_factory, websocket, _path):
@@ -69,15 +70,17 @@ class WSTransport:
 
     async def close(self, _force_after=0):
         '''Close the connection and return when closed.'''
+        self.closing = True
         await self.websocket.close()
 
     async def abort(self):
         '''Abort the connection.  For now this just calls close().'''
+        self.closing = True
         await self.close()
 
     def is_closing(self):
         '''Return True if the connection is closing.'''
-        return False
+        return self.closing
 
     def proxy(self):
         return None
@@ -99,8 +102,7 @@ class WSClient:
         self.process_messages_task = None
 
     async def __aenter__(self):
-        websocket = await websockets.connect(self.uri, **self.kwargs)
-        self.transport = WSTransport(websocket, self.session_factory, 'client')
+        self.transport = await WSTransport.ws_client(self.uri, **self.kwargs)
         self.process_messages_task = await spawn(self.transport.process_messages())
         return self.transport.session
 

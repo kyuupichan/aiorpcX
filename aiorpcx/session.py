@@ -166,7 +166,7 @@ class SessionBase:
     @property
     def session_kind(self):
         '''Either client or server.'''
-        return self.transport._kind
+        return self.transport.kind
 
     def connection_lost(self):
         pass
