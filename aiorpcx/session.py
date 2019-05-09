@@ -377,8 +377,8 @@ class BatchRequest:
     async def __aexit__(self, exc_type, exc_value, traceback):
         if exc_type is None:
             self.batch = Batch(self._requests)
-            message, event = self._session.connection.send_batch(self.batch)
-            self.results = await self._session._send_concurrent(message, event, len(self.batch))
+            message, future = self._session.connection.send_batch(self.batch)
+            self.results = await self._session._send_concurrent(message, future, len(self.batch))
             if self._raise_errors:
                 if any(isinstance(item, Exception) for item in self.results):
                     raise BatchError(self)
@@ -477,12 +477,12 @@ class RPCSession(SessionBase):
         if disconnect:
             await self.close()
 
-    async def _send_concurrent(self, message, event, request_count):
+    async def _send_concurrent(self, message, future, request_count):
         async with self._outgoing_concurrency:
             send_time = await self._send_message(message)
             try:
                 async with timeout_after(self.sent_request_timeout):
-                    await event.wait()
+                    return await future
             finally:
                 time_taken = time.time() - send_time
                 if request_count == 1:
@@ -491,12 +491,6 @@ class RPCSession(SessionBase):
                     self._req_times.extend([time_taken / request_count] * request_count)
                 if len(self._req_times) >= self.recalibrate_count:
                     self._recalc_concurrency()
-
-        result = event.result
-        # For batches, CancelledError can happen with cancel_pending_requests
-        if isinstance(result, Exception):
-            raise result
-        return result
 
     def connection_lost(self):
         super().connection_lost()
@@ -517,8 +511,8 @@ class RPCSession(SessionBase):
 
     async def send_request(self, method, args=()):
         '''Send an RPC request over the network.'''
-        message, event = self.connection.send_request(Request(method, args))
-        return await self._send_concurrent(message, event, 1)
+        message, future = self.connection.send_request(Request(method, args))
+        return await self._send_concurrent(message, future, 1)
 
     async def send_notification(self, method, args=()):
         '''Send an RPC notification over the network.'''

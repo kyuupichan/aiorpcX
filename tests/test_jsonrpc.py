@@ -732,22 +732,22 @@ async def test_send_request_and_response(protocol):
 
     async def send_message():
         nonlocal send_message
-        send_message, event = connection.send_request(req)
+        send_message, future = connection.send_request(req)
         waiting.set()
-        await event.wait()
-        assert event.result == 6
+        assert await future == 6
         # Test receipt of an error response
-        send_message, event = connection.send_request(req)
+        send_message, future = connection.send_request(req)
         waiting.set()
-        await event.wait()
-        assert_RPCError(event.result, JSONRPC.METHOD_NOT_FOUND,
-                        "cannot add up")
-        send_message, event = connection.send_request(req)
+        try:
+            await future
+        except Exception as e:
+            assert_RPCError(e, JSONRPC.METHOD_NOT_FOUND, "cannot add up")
+        send_message, future = connection.send_request(req)
         waiting.set()
-        await event.wait()
-        # Test receipt of a protocol violation
-        assert_ProtocolError(event.result, JSONRPC.INVALID_REQUEST,
-                             '"result"')
+        try:
+            await future
+        except Exception as e:
+            assert_ProtocolError(e, JSONRPC.INVALID_REQUEST, '"result"')
 
     async def send_response():
         for n in range(3):
@@ -811,10 +811,9 @@ async def test_send_response_round_trip(protocol):
     queue = Queue()
 
     async def send_request():
-        message, event = connection.send_request(req)
+        message, future = connection.send_request(req)
         await queue.put(message)
-        await event.wait()
-        assert event.result == 6
+        assert await future == 6
 
     async def receive_request():
         # This will be the request sent
@@ -857,10 +856,9 @@ async def test_send_batch_round_trip(batch_protocol):
 
     async def send_request():
         # Check the returned answers are in the correct order
-        message, event = connection.send_batch(batch)
+        message, future = connection.send_batch(batch)
         await queue.put(message)
-        await event.wait()
-        assert event.result == tuple(answers)
+        assert await future == tuple(answers)
 
     async def receive_request():
         # This will be the batch request sent
@@ -934,10 +932,10 @@ async def test_batch_fails(batch_protocol):
     queue = Queue()
 
     async def send_request():
-        message, event = connection.send_batch(batch)
+        message, future = connection.send_batch(batch)
         await queue.put(message)
         async with ignore_after(0.01):
-            await event.wait()
+            await future
 
     async def receive_request():
         # This will be the batch request sent
@@ -1005,17 +1003,18 @@ async def test_max_response_size(protocol):
 
     JSONRPCConnection._id_counter = count()
     async def send_request_good(request):
-        message, event = connection.send_request(request)
+        message, future = connection.send_request(request)
         await queue.put(message)
-        await event.wait()
-        assert event.result == result
+        assert await future == result
 
     async def send_request_bad(request):
-        message, event = connection.send_request(request)
+        message, future = connection.send_request(request)
         await queue.put(message)
-        await event.wait()
-        assert_RPCError(event.result, JSONRPC.INVALID_REQUEST,
-                        "response too large")
+        try:
+            await future
+            assert False
+        except Exception as e:
+            assert_RPCError(e, JSONRPC.INVALID_REQUEST, "response too large")
 
     async def receive_request(count):
         # This will be the notification sent
@@ -1042,10 +1041,10 @@ async def test_max_response_size(protocol):
             await group.spawn(send_request_bad(request))
 
     async def send_batch(batch):
-        message, event = connection.send_batch(batch)
+        message, future = connection.send_batch(batch)
         await queue.put(message)
-        await event.wait()
-        for n, part_result in enumerate(event.result):
+        results = await future
+        for n, part_result in enumerate(results):
             if n == 0:
                 assert part_result == result
             else:

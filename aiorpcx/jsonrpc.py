@@ -1,4 +1,4 @@
-# Copyright (c) 2018, Neil Booth
+# Copyright (c) 2018-2019, Neil Booth
 #
 # All rights reserved.
 #
@@ -34,11 +34,12 @@ import json
 from functools import partial
 from numbers import Number
 
-from aiorpcx import Event, CancelledError
+from asyncio import get_event_loop
+from aiorpcx import CancelledError
 from aiorpcx.util import signature_info
 
 
-class SingleRequest(object):
+class SingleRequest:
     __slots__ = ('method', 'args')
 
     def __init__(self, method, args):
@@ -68,7 +69,7 @@ class Notification(SingleRequest):
     pass
 
 
-class Batch(object):
+class Batch:
     __slots__ = ('items', )
 
     def __init__(self, items):
@@ -94,7 +95,7 @@ class Batch(object):
         return f'Batch({len(self.items)} items)'
 
 
-class Response(object):
+class Response:
     __slots__ = ('result', )
 
     def __init__(self, result):
@@ -154,7 +155,7 @@ class ProtocolError(CodeMessageError):
         self.response_msg_id = id
 
 
-class JSONRPC(object):
+class JSONRPC:
     '''Abstract base class that interprets and constructs JSON RPC messages.'''
 
     # Error codes.  See http://www.jsonrpc.org/specification
@@ -576,7 +577,7 @@ class JSONRPCAutoDetect(JSONRPCv2):
         return protocol_for_payload(main)
 
 
-class JSONRPCConnection(object):
+class JSONRPCConnection:
     '''Maintains state of a JSON RPC connection, in particular
     encapsulating the handling of request IDs.
 
@@ -593,6 +594,7 @@ class JSONRPCConnection(object):
         # The key is its request ID; for a batch it is sorted tuple
         # of request IDs
         self._requests = {}
+        self._create_future = get_event_loop().create_future
         # A public attribute intended to be settable dynamically
         self.max_response_size = 0
 
@@ -608,9 +610,11 @@ class JSONRPCConnection(object):
             else:
                 message = f'response to unsent request (ID: {request_id})'
             raise ProtocolError.invalid_request(message) from None
-        _request, event = self._requests.pop(request_id)
-        event.result = result
-        event.set()
+        _request, future = self._requests.pop(request_id)
+        if isinstance(result, Exception):
+            future.set_exception(result)
+        else:
+            future.set_result(result)
         return []
 
     def _receive_request_batch(self, payloads):
@@ -660,9 +664,8 @@ class JSONRPCConnection(object):
         ordered_ids, ordered_results = zip(*ordered)
         if ordered_ids not in self._requests:
             raise ProtocolError.invalid_request('response to unsent batch')
-        _request_batch, event = self._requests.pop(ordered_ids)
-        event.result = ordered_results
-        event.set()
+        _request_batch, future = self._requests.pop(ordered_ids)
+        future.set_result(ordered_results)
         return []
 
     def _send_result(self, request_id, result):
@@ -671,10 +674,10 @@ class JSONRPCConnection(object):
             message = self._oversized_response_message(request_id)
         return message
 
-    def _event(self, request, request_id):
-        event = Event()
-        self._requests[request_id] = (request, event)
-        return event
+    def _future(self, request, request_id):
+        future = self._create_future()
+        self._requests[request_id] = (request, future)
+        return future
 
     #
     # External API
@@ -691,7 +694,7 @@ class JSONRPCConnection(object):
         '''
         request_id = next(self._id_counter)
         message = self._protocol.request_message(request, request_id)
-        return message, self._event(request, request_id)
+        return message, self._future(request, request_id)
 
     def send_notification(self, notification):
         return self._protocol.notification_message(notification)
@@ -700,7 +703,7 @@ class JSONRPCConnection(object):
         ids = tuple(next(self._id_counter)
                     for request in batch if isinstance(request, Request))
         message = self._protocol.batch_message(batch, ids)
-        event = self._event(batch, ids) if ids else None
+        event = self._future(batch, ids) if ids else None
         return message, event
 
     def receive_message(self, message):
@@ -739,9 +742,9 @@ class JSONRPCConnection(object):
     def cancel_pending_requests(self):
         '''Cancel all pending requests.'''
         exception = CancelledError()
-        for _request, event in self._requests.values():
-            event.result = exception
-            event.set()
+        for _request, future in self._requests.values():
+            if not future.done():
+                future.set_exception(exception)
         self._requests.clear()
 
     def pending_requests(self):
