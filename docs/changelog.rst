@@ -5,7 +5,7 @@ ChangeLog
           for a 1.0 release in the coming months.
 
 
-Version 0.18.0 (09 May 2020)
+Version 0.18.0 (09 May 2019)
 ----------------------------
 
 * Add *websocket* support as client and server by using Aymeric Augustin's excellent
@@ -31,7 +31,7 @@ Version 0.18.0 (09 May 2020)
 * JSON RPC message handling was made more efficient by using futures instead of events
   internally
 
-Version 0.17.0 (22 Apr 2020)
+Version 0.17.0 (22 Apr 2019)
 ----------------------------
 
 * Add some new APIs, update others
