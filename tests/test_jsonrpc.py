@@ -1029,16 +1029,14 @@ async def test_max_response_size(protocol):
 
     connection = JSONRPCConnection(protocol)
     connection.max_response_size = size
-    async with timeout_after(0.01):
-        async with TaskGroup() as group:
-            await group.spawn(receive_request(1))
-            await group.spawn(send_request_good(request))
+    async with TaskGroup() as group:
+        await group.spawn(receive_request(1))
+        await group.spawn(send_request_good(request))
 
     connection.max_response_size = size - 1
-    async with timeout_after(0.01):
-        async with TaskGroup() as group:
-            await group.spawn(receive_request(1))
-            await group.spawn(send_request_bad(request))
+    async with TaskGroup() as group:
+        await group.spawn(receive_request(1))
+        await group.spawn(send_request_bad(request))
 
     async def send_batch(batch):
         message, future = connection.send_batch(batch)
@@ -1053,10 +1051,9 @@ async def test_max_response_size(protocol):
     if protocol.allow_batches:
         connection.max_response_size = size + 3
         batch = Batch([request, request, request])
-        async with timeout_after(0.01):
-            async with TaskGroup() as group:
-                await group.spawn(receive_request(len(batch)))
-                await group.spawn(send_batch(batch))
+        async with TaskGroup() as group:
+            await group.spawn(receive_request(len(batch)))
+            await group.spawn(send_batch(batch))
 
 
 def test_misc(protocol):
