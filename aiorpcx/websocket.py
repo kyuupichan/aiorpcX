@@ -58,6 +58,9 @@ class WSTransport:
 
     async def recv_message(self):
         message = await self.websocket.recv()
+        # It might be nice to avoid the redundant conversions
+        if isinstance(message, str):
+            message = message.encode()
         self.session.data_received(message)
         return message
 
