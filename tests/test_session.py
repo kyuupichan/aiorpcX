@@ -223,6 +223,7 @@ class TestRPCSession:
         async with connect_rs('localhost', server_port) as session:
             server = await MyServerSession.current_server()
             await session.send_notification('notify', ['test'])
+        await sleep(0.001)
         assert server.notifications == ['test']
 
     @pytest.mark.asyncio
