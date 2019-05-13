@@ -74,6 +74,11 @@ class WSTransport:
 
     # API exposed to session
     async def write(self, framed_message):
+        # Prefer to send as text
+        try:
+            framed_message = framed_message.decode()
+        except UnicodeDecodeError:
+            pass
         await self.websocket.send(framed_message)
 
     async def close(self, _force_after=0):
