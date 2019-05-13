@@ -5,6 +5,13 @@ ChangeLog
           for a 1.0 release in the coming months.
 
 
+Version 0.18.1 (09 May 2019)
+----------------------------
+
+* convert incoming websocket text frames to binary.  Convert outgoing messages to text
+  frames if possible.
+
+
 Version 0.18.0 (09 May 2019)
 ----------------------------
 
