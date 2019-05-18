@@ -611,10 +611,11 @@ class JSONRPCConnection:
                 message = f'response to unsent request (ID: {request_id})'
             raise ProtocolError.invalid_request(message) from None
         _request, future = self._requests.pop(request_id)
-        if isinstance(result, Exception):
-            future.set_exception(result)
-        else:
-            future.set_result(result)
+        if not future.done():
+            if isinstance(result, Exception):
+                future.set_exception(result)
+            else:
+                future.set_result(result)
         return []
 
     def _receive_request_batch(self, payloads):
@@ -665,7 +666,8 @@ class JSONRPCConnection:
         if ordered_ids not in self._requests:
             raise ProtocolError.invalid_request('response to unsent batch')
         _request_batch, future = self._requests.pop(ordered_ids)
-        future.set_result(ordered_results)
+        if not future.done():
+            future.set_result(ordered_results)
         return []
 
     def _send_result(self, request_id, result):
