@@ -5,6 +5,12 @@ ChangeLog
           for a 1.0 release in the coming months.
 
 
+Version 0.18.2 (19 May 2019)
+----------------------------
+
+* minor bugfix release
+
+
 Version 0.18.1 (09 May 2019)
 ----------------------------
 
