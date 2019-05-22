@@ -26,7 +26,10 @@
 
 from functools import partial
 
-import websockets
+try:
+    import websockets
+except ImportError:
+    websockets = None
 
 from aiorpcx.curio import spawn
 from aiorpcx.session import RPCSession, SessionKind

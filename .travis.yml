@@ -7,7 +7,7 @@ python:
   - "nightly"
 # command to install dependencies
 install:
-  - pip install -e .
+  - pip install -e .[ws]
   - pip install uvloop
   - pip install pytest-asyncio
   - pip install pytest-cov
