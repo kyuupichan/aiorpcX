@@ -586,10 +586,9 @@ class JSONRPCConnection:
         instead.
     '''
 
-    _id_counter = itertools.count()
-
     def __init__(self, protocol):
         self._protocol = protocol
+        self._id_counter = itertools.count()
         # Sent Requests and Batches that have not received a response.
         # The key is its request ID; for a batch it is sorted tuple
         # of request IDs
