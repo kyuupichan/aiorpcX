@@ -20,7 +20,10 @@ setuptools.setup(
     name='aiorpcX',
     version=version,
     python_requires='>=3.6',
-    install_requires=['websockets'],
+    install_requires=[],
+    extras_require={
+        'ws': 'websockets',
+    },
     packages=['aiorpcx'],
     description='Generic async RPC implementation, including JSON-RPC',
     author='Neil Booth',
