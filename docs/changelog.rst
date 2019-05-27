@@ -5,18 +5,22 @@ ChangeLog
           for a 1.0 release in the coming months.
 
 
+Version 0.18.3 (19 May 2019)
+----------------------------
+
+* minor bugfix release, fixing `#22`_
+* make JSON IDs independent across sessions, make websockets dependency optional (SomberNight)
+
 Version 0.18.2 (19 May 2019)
 ----------------------------
 
 * minor bugfix release
-
 
 Version 0.18.1 (09 May 2019)
 ----------------------------
 
 * convert incoming websocket text frames to binary.  Convert outgoing messages to text
   frames if possible.
-
 
 Version 0.18.0 (09 May 2019)
 ----------------------------
@@ -300,3 +304,4 @@ Version 0.5.6
 .. _#5: https://github.com/kyuupichan/aiorpcX/issues/5
 .. _#8: https://github.com/kyuupichan/aiorpcX/issues/8
 .. _#10: https://github.com/kyuupichan/aiorpcX/issues/10
+.. _#22: https://github.com/kyuupichan/aiorpcX/issues/22
