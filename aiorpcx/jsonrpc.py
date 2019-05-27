@@ -742,10 +742,9 @@ class JSONRPCConnection:
 
     def cancel_pending_requests(self):
         '''Cancel all pending requests.'''
-        exception = CancelledError()
         for _request, future in self._requests.values():
             if not future.done():
-                future.set_exception(exception)
+                future.cancel()
         self._requests.clear()
 
     def pending_requests(self):
