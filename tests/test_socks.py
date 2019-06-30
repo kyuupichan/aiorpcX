@@ -629,6 +629,33 @@ class TestSOCKSProxy(object):
         p = SOCKSProxy(address, SOCKS5, auth_methods[1])
         assert str(p) == f'SOCKS5 proxy at {address}, auth: username'
 
+    def test_random(self):
+        auth1 = auth_methods[1]
+        auth2 = SOCKSRandomAuth()
+
+        # SOCKSRandomAuth is a SOCKSUserAuth
+        assert isinstance(auth2, SOCKSUserAuth)
+
+        # Username of SOCKSUserAuth should be constant
+        user1a = auth1.username
+        user1b = auth1.username
+        assert user1a == user1b
+
+        # Password of SOCKSUserAuth should be constant
+        pass1a = auth1.password
+        pass1b = auth1.password
+        assert pass1a == pass1b
+
+        # Username of SOCKSRandomAuth should be random
+        user2a = auth2.username
+        user2b = auth2.username
+        assert user2a != user2b
+
+        # Password of SOCKSRandomAuth should be random
+        pass2a = auth2.password
+        pass2b = auth2.password
+        assert pass2a != pass2b
+
 
 def test_basic():
     assert issubclass(SOCKSProtocolError, SOCKSError)
