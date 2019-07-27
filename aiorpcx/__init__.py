@@ -1,6 +1,7 @@
 from .curio import *
 from .framing import *
 from .jsonrpc import *
+from .proxy_rawsocket import *
 from .rawsocket import *
 from .socks import *
 from .session import *
@@ -15,6 +16,7 @@ _version = tuple(int(part) for part in _version_str.split('.'))
 __all__ = (curio.__all__ +
            framing.__all__ +
            jsonrpc.__all__ +
+           proxy_rawsocket.__all__ +
            rawsocket.__all__ +
            socks.__all__ +
            session.__all__ +
