@@ -326,7 +326,7 @@ class SOCKSProxy:
                 await self._handshake(client, sock, loop)
                 self.peername = sock.getpeername()
                 return sock
-            except (OSError, SOCKSProtocolError) as e:
+            except (OSError, SOCKSError) as e:
                 exception = e
                 # Don't close the socket because of an asyncio bug
                 # see https://github.com/kyuupichan/aiorpcX/issues/8
