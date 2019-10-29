@@ -420,7 +420,11 @@ class RPCSession(SessionBase):
         current = self._outgoing_concurrency.max_concurrent
         cap = min(current + max(3, current * 0.1), 250)
         floor = max(1, min(current * 0.8, current - 1))
-        target = int(0.5 + max(floor, min(cap, current * self.target_response_time / avg)))
+        if avg != 0:
+            target = max(floor, min(cap, current * self.target_response_time / avg))
+        else:
+            target = cap
+        target = int(0.5 + target)
         if target != current:
             self.logger.info(f'changing outgoing request concurrency to {target} from {current}')
             self._outgoing_concurrency.set_target(target)
@@ -494,7 +498,7 @@ class RPCSession(SessionBase):
                 async with timeout_after(self.sent_request_timeout):
                     return await future
             finally:
-                time_taken = time.time() - send_time
+                time_taken = max(0, time.time() - send_time)
                 if request_count == 1:
                     self._req_times.append(time_taken)
                 else:
