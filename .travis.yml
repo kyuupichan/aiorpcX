@@ -10,13 +10,13 @@ install:
   - pip install -e .[ws]
   - pip install uvloop
   - pip install pytest-asyncio
-  - pip install pytest-cov
+  - pip install coverage
   - pip install coveralls
   - pip install pycodestyle
   - pip install Sphinx
 # command to run tests
 script:
-  - pytest --cov=aiorpcx
+  - coverage run -m pytest
   - pycodestyle --max-line-length=100 aiorpcx/*.py
   - sh -c "cd docs && make html"
 after_success: coveralls
