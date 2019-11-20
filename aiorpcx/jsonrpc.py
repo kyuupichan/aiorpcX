@@ -35,7 +35,6 @@ from functools import partial
 from numbers import Number
 
 from asyncio import get_event_loop
-from aiorpcx import CancelledError
 from aiorpcx.util import signature_info
 
 

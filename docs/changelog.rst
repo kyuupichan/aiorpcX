@@ -5,6 +5,13 @@ ChangeLog
           for a 1.0 release in the coming months.
 
 
+Version 0.18.4 (20 Nov 2019)
+----------------------------
+
+* handle time.time() not making progress. fixing `#26`_  (SomberNight)
+* handle SOCKSError in _connect_one (SomberNight)
+* add SOCKSRandomAuth: Jeremy Rand
+
 Version 0.18.3 (19 May 2019)
 ----------------------------
 
@@ -305,3 +312,4 @@ Version 0.5.6
 .. _#8: https://github.com/kyuupichan/aiorpcX/issues/8
 .. _#10: https://github.com/kyuupichan/aiorpcX/issues/10
 .. _#22: https://github.com/kyuupichan/aiorpcX/issues/22
+.. _#26: https://github.com/kyuupichan/aiorpcX/issues/26
