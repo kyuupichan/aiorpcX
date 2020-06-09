@@ -23,3 +23,8 @@ script:
   - pycodestyle --max-line-length=100 aiorpcx/*.py
   - sh -c "cd docs && make html"
 after_success: coveralls
+jobs:
+  allow_failures:
+    - python: "3.8-dev"
+    - python: "3.9-dev"
+    - python: "3.10-dev"
