@@ -45,7 +45,7 @@ SOCKSUserAuth = collections.namedtuple("SOCKSUserAuth", "username password")
 
 # Random authentication is useful when used with Tor for stream isolation.
 class SOCKSRandomAuth(SOCKSUserAuth):
-    def __getitem__(self, key):
+    def __getattribute__(self, key):
         return secrets.token_hex(32)
 
 
