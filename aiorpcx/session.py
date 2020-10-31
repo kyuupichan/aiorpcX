@@ -184,6 +184,12 @@ class SessionBase:
         if abs(self.cost - self._cost_last) > 100:
             self.recalc_concurrency()
 
+    def on_disconnect_due_to_excessive_session_cost(self):
+        '''Called just before disconnecting from the session, if it was consuming too
+        much resources.
+        '''
+        pass
+
     def recalc_concurrency(self):
         '''Call to recalculate sleeps and concurrency for the session.  Called automatically if
         cost has drifted significantly.  Otherwise can be called at regular intervals if
@@ -306,6 +312,7 @@ class MessageSession(SessionBase):
             self.logger.info(f'incoming request timed out after {timeout} secs')
             self._bump_errors()
         except ExcessiveSessionCostError:
+            self.on_disconnect_due_to_excessive_session_cost()
             await self.close()
         except CancelledError:
             raise
@@ -474,6 +481,7 @@ class RPCSession(SessionBase):
             result = e.args[0]
             disconnect = True
         except ExcessiveSessionCostError:
+            self.on_disconnect_due_to_excessive_session_cost()
             result = RPCError(JSONRPC.EXCESSIVE_RESOURCE_USAGE, 'excessive resource usage')
             disconnect = True
         except CancelledError:
