@@ -553,7 +553,7 @@ async def test_nested_context_timeout2():
         try:
             async with timeout_after(0.01) as ta:
                 await coro2()
-        except Exception as e:
+        except (Exception, CancelledError) as e:
             assert isinstance(e, TaskTimeout)
         else:
             assert False
@@ -585,7 +585,7 @@ async def test_nested_context_timeout3():
     async def parent():
         try:
             await timeout_after(0.001, coro2)
-        except Exception as e:
+        except (Exception, CancelledError) as e:
             assert isinstance(e, TaskTimeout)
         else:
             assert False

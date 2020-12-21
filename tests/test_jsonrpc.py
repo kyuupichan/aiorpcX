@@ -1,3 +1,5 @@
+import sys
+
 from itertools import chain, combinations, count
 import json
 import pytest
@@ -1122,17 +1124,22 @@ def test_handler_invocation():
         invocation = handler_invocation(handler, request)
         assert invocation() == result
 
-    bad_requests = (
+    if sys.version_info < (3, 8):
+        powb_request = (Request('powb', {"x": 2, "y": 3}), 'cannot be called')
+    else:
+        powb_request = (Request('powb', {"x": 2, "y": 3}), 'requires parameters')
+
+    bad_requests = [
         (Request('missing_method', []), 'unknown method'),
         (Request('add_many', []), 'requires 1'),
         (Request('add_many', {'first': 1, 'values': []}), 'values'),
-        (Request('powb', {"x": 2, "y": 3}), 'cannot be called'),
+        powb_request,
         (Request('echo_2', ['ping', 'pong']), 'at most 1'),
         (Request('echo_2', {'first': 1, 'second': 8, '3rd': 1}), '3rd'),
         (Request('kwargs', []), 'requires 1'),
         (Request('kwargs', {'end': 4}), "start"),
         (Request('kwargs', {'start': 3, 'end': 1, '3rd': 1}), '3rd'),
-    )
+    ]
 
     for request, text in bad_requests:
         with pytest.raises(RPCError) as e:
