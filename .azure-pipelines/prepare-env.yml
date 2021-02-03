@@ -1,0 +1,21 @@
+parameters:
+  onlyPullRequests: false
+
+steps:
+- script: |
+    python -m pip install websockets uvloop 
+    python -m pip install pycodestyle
+    python -m pip install coveralls coverage
+    python -m pip install pytest pytest-asyncio Sphinx
+  displayName: Prepare general environment
+  condition: |
+    and(
+      succeeded(),
+      or(
+        eq(variables['Build.Reason'], 'PullRequest'),
+        eq(${{ parameters.onlyPullRequests }}, false)
+      )
+    )
+  enabled: true
+  continueOnError: false
+  failOnStderr: false
