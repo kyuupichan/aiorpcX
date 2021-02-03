@@ -37,7 +37,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from asyncio import (
-    CancelledError, get_event_loop, Queue, Event, Lock, Semaphore, sleep
+    CancelledError, get_event_loop, Queue, Event, Lock, Semaphore, sleep, current_task
 )
 from collections import deque
 from contextlib import suppress
@@ -54,13 +54,6 @@ __all__ = (
     'TaskTimeout', 'TimeoutCancellationError', 'UncaughtTimeoutError',
     'timeout_after', 'timeout_at', 'ignore_after', 'ignore_at',
 )
-
-
-if sys.version_info >= (3, 7):
-    from asyncio import current_task
-else:
-    from asyncio import Task
-    current_task = Task.current_task
 
 
 async def run_in_thread(func, *args):
@@ -85,7 +78,7 @@ class NoRemainingTasksError(RuntimeError):
     pass
 
 
-class TaskGroup(object):
+class TaskGroup:
     '''A class representing a group of executing tasks. tasks is an
     optional set of existing tasks to put into the group. New tasks
     can later be added using the spawn() method below. wait specifies
@@ -291,7 +284,7 @@ def _unset_task_deadline(task):
     return timed_out_deadline, uncaught
 
 
-class TimeoutAfter(object):
+class TimeoutAfter:
 
     def __init__(self, deadline, *, ignore=False, absolute=False):
         self._deadline = deadline

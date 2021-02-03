@@ -19,7 +19,7 @@ version = find_version(os.path.join(tld, 'aiorpcx', '__init__.py'))
 setuptools.setup(
     name='aiorpcX',
     version=version,
-    python_requires='>=3.6',
+    python_requires='>=3.8',
     install_requires=[],
     extras_require={
         'ws': 'websockets',
