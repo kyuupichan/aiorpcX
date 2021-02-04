@@ -43,7 +43,6 @@ from collections import deque
 from contextlib import suppress
 from functools import partial
 import logging
-import sys
 
 from aiorpcx.util import instantiate_coroutine, check_task
 
@@ -237,11 +236,12 @@ class TaskGroup:
 
 class TaskTimeout(CancelledError):
 
-    def __init__(self, secs):
+    def __init__(self, secs, *args):
+        super().__init__(*args)
         self.secs = secs
 
     def __str__(self):
-        return f'task timed out after {self.args[0]}s'
+        return f'task timed out after {self.secs}s'
 
 
 class TimeoutCancellationError(CancelledError):
@@ -290,6 +290,8 @@ class TimeoutAfter:
         self._deadline = deadline
         self._ignore = ignore
         self._absolute = absolute
+        self._secs = None
+        self._task = None
         self.expired = False
 
     async def __aenter__(self):

@@ -4,7 +4,7 @@ parameters:
 steps:
 - script: |
     python -m pip install websockets uvloop 
-    python -m pip install pycodestyle
+    python -m pip install pycodestyle pylint
     python -m pip install coveralls coverage
     python -m pip install pytest pytest-asyncio Sphinx
   displayName: Prepare general environment

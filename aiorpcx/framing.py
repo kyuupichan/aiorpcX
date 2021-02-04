@@ -59,6 +59,7 @@ class FramerBase:
         raise NotImplementedError
 
 
+# pylint:disable=W0223
 class NewlineFramer(FramerBase):
     '''A framer for a protocol where messages are separated by newlines.'''
 
@@ -241,7 +242,7 @@ class BitcoinFramer(BinaryFramer):
         self._magic = magic
         self._max_block_size = max_block_size
         self._pad_command = pad_command
-        self._unpack = Struct(f'<4s12sI4s').unpack
+        self._unpack = Struct('<4s12sI4s').unpack
 
     def _checksum(self, payload):
         return double_sha256(payload)[:4]

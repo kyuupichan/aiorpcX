@@ -188,7 +188,6 @@ class SessionBase:
         '''Called just before disconnecting from the session, if it was consuming too
         much resources.
         '''
-        pass
 
     def recalc_concurrency(self):
         '''Call to recalculate sleeps and concurrency for the session.  Called automatically if
@@ -314,7 +313,7 @@ class MessageSession(SessionBase):
         except ExcessiveSessionCostError:
             self.on_disconnect_due_to_excessive_session_cost()
             await self.close()
-        except Exception:
+        except Exception:   # pylint:disable=W0703
             self.logger.exception(f'exception handling {message}')
             self._bump_errors()
 
@@ -482,7 +481,7 @@ class RPCSession(SessionBase):
             self.on_disconnect_due_to_excessive_session_cost()
             result = RPCError(JSONRPC.EXCESSIVE_RESOURCE_USAGE, 'excessive resource usage')
             disconnect = True
-        except Exception:
+        except Exception:     # pylint:disable=W0703
             self.logger.exception(f'exception handling {request}')
             result = RPCError(JSONRPC.INTERNAL_ERROR, 'internal server error')
 
