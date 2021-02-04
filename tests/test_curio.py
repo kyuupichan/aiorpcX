@@ -373,10 +373,9 @@ async def test_timeout_after_no_expire():
         return await return_after_sleep(1 + sum(values), 0.005)
 
     try:
-        assert await timeout_after(0.04, t1, 1) == 2
+        assert await timeout_after(0.1, t1, 1) == 2
     except TaskTimeout:
         assert False
-    await sleep(0.02)
     assert True
 
 

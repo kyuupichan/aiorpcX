@@ -808,7 +808,6 @@ class TestMessageSession(object):
             await session.send_message((b'syntax', b''))
             await session.send_message((b'protocol', b''))
             await session.send_message((b'cancel', b''))
-        await sleep(0.01)
         assert in_caplog(caplog, 'exception handling')
         assert in_caplog(caplog, 'Not allowed')
 
@@ -817,7 +816,6 @@ class TestMessageSession(object):
         framer = BitcoinFramer(magic=bytes(4))
         async with connect_message_session('localhost', msg_server_port, framer=framer) as session:
             await session.send_message((b'version', b''))
-        await sleep(0.01)
         assert in_caplog(caplog, 'bad network magic')
 
     @pytest.mark.asyncio
@@ -826,7 +824,6 @@ class TestMessageSession(object):
         framer._checksum = lambda payload: bytes(32)
         async with connect_message_session('localhost', msg_server_port, framer=framer) as session:
             await session.send_message((b'version', b''))
-        await sleep(0.01)
         assert in_caplog(caplog, 'checksum mismatch')
 
     @pytest.mark.asyncio
@@ -837,7 +834,6 @@ class TestMessageSession(object):
         assert not in_caplog(caplog, 'oversized payload')
         async with connect_message_session('localhost', msg_server_port) as session:
             await session.send_message((b'version', bytes(big + 1)))
-        await sleep(0.01)
         assert in_caplog(caplog, 'oversized payload')
 
     @pytest.mark.asyncio
@@ -873,7 +869,6 @@ class TestMessageSession(object):
                 await session.send_message((b'sleep', b''))
                 await sleep(0.02)
             assert server.errors == 1
-        await sleep(0.01)
         assert in_caplog(caplog, 'timed out')
 
 
