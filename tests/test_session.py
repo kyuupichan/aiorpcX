@@ -81,14 +81,6 @@ def caplog_count(caplog, message):
     return sum(message in record.message for record in caplog.records)
 
 
-# This runs all the tests one with plain asyncio, then again with uvloop
-@pytest.fixture(scope="session", autouse=True, params=(False, True))
-def use_uvloop(request):
-    if request.param:
-        import uvloop
-        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-
-
 @pytest.fixture
 def server_port(unused_tcp_port, event_loop):
     coro = serve_rs(MyServerSession, 'localhost', unused_tcp_port, loop=event_loop)

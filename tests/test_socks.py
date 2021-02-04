@@ -24,13 +24,6 @@ SOCKS5_addresses = (GDNS, GCOM, IPv6)
 auth_methods = [None, SOCKSUserAuth('user', 'pass')]
 
 
-# This runs all the tests one with plain asyncio, then again with uvloop
-@pytest.fixture(scope="session", autouse=True, params=(False, True))
-def use_uvloop(request):
-    if request.param:
-        import uvloop
-        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-
 @pytest.fixture(params=SOCKS4_addresses)
 def addr4(request):
     return request.param

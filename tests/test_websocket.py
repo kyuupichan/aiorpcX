@@ -7,13 +7,6 @@ from aiorpcx import *
 
 from test_session import MyServerSession
 
-# This runs all the tests one with plain asyncio, then again with uvloop
-@pytest.fixture(scope="session", autouse=True, params=(False, True))
-def use_uvloop(request):
-    if request.param:
-        import uvloop
-        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-
 
 @pytest.fixture
 def ws_server(unused_tcp_port, event_loop):

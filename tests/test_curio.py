@@ -154,7 +154,7 @@ async def test_tg_cm_all():
 
 @pytest.mark.asyncio
 async def test_tg_cm_any():
-    tasks = [await spawn(sleep, x/200) for x in range(5, 0, -1)]
+    tasks = [await spawn(sleep, x/200) for x in (0.1, 0.01, -1)]
     async with TaskGroup(tasks, wait=any) as t:
         pass
     assert all(task.done() for task in tasks)
