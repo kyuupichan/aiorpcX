@@ -107,7 +107,7 @@ async def test_tg_spawn():
 
 @pytest.mark.asyncio
 async def test_tg_cancel_remaining():
-    tasks = [await spawn(sleep, x/200) for x in range(1, 4)]
+    tasks = [await spawn(sleep, x) for x in (0.001, 0.2, 0.3, 0.4)]
     t = TaskGroup(tasks)
     assert await t.next_done()
     await t.cancel_remaining()
@@ -175,7 +175,7 @@ async def test_tg_join_object():
 
     tasks = [await spawn(return_value(None, 0.01)),
              await spawn(return_value(4, 0.02)),
-             await spawn(return_value(2, 0.03))]
+             await spawn(return_value(2, 0.1))]
     t = TaskGroup(tasks, wait=object)
     await t.join()
     assert tasks[0].result() == None
@@ -196,7 +196,7 @@ async def test_tg_cm_object():
 
     tasks = [await spawn(return_value(None, 0.01)),
              await spawn(return_value(4, 0.02)),
-             await spawn(return_value(2, 0.03))]
+             await spawn(return_value(2, 0.1))]
     async with TaskGroup(tasks, wait=object) as t:
         pass
     assert tasks[0].result() == None
@@ -370,10 +370,10 @@ async def test_timeout_after_zero():
 @pytest.mark.asyncio
 async def test_timeout_after_no_expire():
     async def t1(*values):
-        return await return_after_sleep(1 + sum(values), 0.01)
+        return await return_after_sleep(1 + sum(values), 0.005)
 
     try:
-        assert await timeout_after(0.02, t1, 1) == 2
+        assert await timeout_after(0.04, t1, 1) == 2
     except TaskTimeout:
         assert False
     await sleep(0.02)
@@ -733,7 +733,7 @@ async def test_ignore_after_no_expire():
     async def t1(*values):
         return await return_after_sleep(1 + sum(values), 0.001)
 
-    assert await ignore_after(0.005, t1, 1) == 2
+    assert await ignore_after(0.02, t1, 1) == 2
     await sleep(0.002)
 
 

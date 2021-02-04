@@ -3,7 +3,8 @@ parameters:
 
 steps:
 - script: |
-    python -m pip install websockets uvloop 
+    python -m pip install websockets
+    python -m pip install uvloop
     python -m pip install pycodestyle pylint
     python -m pip install coveralls coverage
     python -m pip install pytest pytest-asyncio Sphinx

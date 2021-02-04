@@ -329,7 +329,7 @@ class TestRPCSession:
             protocol.pause_writing()
             assert not protocol._can_send.is_set()
             task = await spawn(session._send_message(b'a'))
-            await sleep(session.max_send_delay * 3)
+            await sleep(0.1)
             assert task.cancelled()
             assert protocol._can_send.is_set()
             assert session.is_closing()
@@ -391,7 +391,7 @@ class TestRPCSession:
             session.cost = 1000
             await sleep(0.01)
             session.recalc_concurrency()
-            assert 995 < session.cost < 999.1
+            assert 990 < session.cost < 999.1
 
     @pytest.mark.asyncio
     async def test_concurrency_hard_limit_0(self, server_port):
