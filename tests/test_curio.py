@@ -134,7 +134,7 @@ async def test_tg_join_no_arg():
 
 @pytest.mark.asyncio
 async def test_tg_cm_no_arg():
-    tasks = [await spawn(sleep, x/200) for x in range(5, 0, -1)]
+    tasks = [await spawn(sleep, x) for x in (0.1, 0.01, -1)]
     async with TaskGroup(tasks) as t:
         pass
     assert all(task.done() for task in tasks)
@@ -154,7 +154,7 @@ async def test_tg_cm_all():
 
 @pytest.mark.asyncio
 async def test_tg_cm_any():
-    tasks = [await spawn(sleep, x/200) for x in (0.1, 0.01, -1)]
+    tasks = [await spawn(sleep, x) for x in (0.1, 0.05, -1)]
     async with TaskGroup(tasks, wait=any) as t:
         pass
     assert all(task.done() for task in tasks)
@@ -733,7 +733,7 @@ async def test_ignore_after_no_expire():
     async def t1(*values):
         return await return_after_sleep(1 + sum(values), 0.001)
 
-    assert await ignore_after(0.02, t1, 1) == 2
+    assert await ignore_after(0.1, t1, 1) == 2
     await sleep(0.002)
 
 

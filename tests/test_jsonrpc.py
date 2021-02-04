@@ -831,7 +831,7 @@ async def test_send_response_round_trip(protocol):
         requests = connection.receive_message(message)
         assert not requests
 
-    async with timeout_after(0.01):
+    async with timeout_after(0.2):
         async with TaskGroup() as group:
             await group.spawn(receive_request)
             await group.spawn(send_request)
@@ -915,7 +915,7 @@ async def test_send_notification_batch(batch_protocol):
         for req, request in zip(batch, requests):
             assert req == request
 
-    async with timeout_after(0.01):
+    async with timeout_after(0.2):
         async with TaskGroup() as group:
             await group.spawn(receive_request)
             await group.spawn(send_request)
@@ -988,7 +988,7 @@ async def test_send_notification(protocol):
         requests = connection.receive_message(message)
         assert requests == [req]
 
-    async with timeout_after(0.01):
+    async with timeout_after(0.2):
         async with TaskGroup() as group:
             await group.spawn(receive_request)
             await group.spawn(send_request)

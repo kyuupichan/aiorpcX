@@ -124,7 +124,8 @@ class WSClient:
 
     async def __aexit__(self, exc_type, exc_value, traceback):
         await self.transport.close()
-        assert self.process_messages_task.done()
+        # Disabled this as loop might not have processed the event, and don't want to sleep here
+        # assert self.process_messages_task.done()
 
 
 def serve_ws(session_factory, *args, **kwargs):
