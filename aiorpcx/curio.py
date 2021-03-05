@@ -104,6 +104,7 @@ class TaskGroup:
         self._logger = logging.getLogger(self.__class__.__name__)
         self._closed = False
         self.completed = None
+        self._joined = False
         for task in tasks:
             self._add_task(task)
 
@@ -178,6 +179,10 @@ class TaskGroup:
         Once join() returns, no more tasks may be added to the task
         group.  Tasks can be added while join() is running.
         '''
+        if self._joined:
+            raise RuntimeError("taskgroup already joined")
+        self._joined = True
+
         def errored(task):
             return not task.cancelled() and task.exception()
 
