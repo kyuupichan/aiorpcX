@@ -989,13 +989,13 @@ async def test_nested_ignore_timeout_uncaught():
 
     async def child():
         # This will do nothing
-        await ignore_after(0.001, coro1())
+        await ignore_after(0.01, coro1())
         results.append('coro1 ignored')
         return 1
 
     async def parent():
         try:
-            if await ignore_after(0.002, child()) is None:
+            if await ignore_after(0.02, child()) is None:
                 results.append('child ignored')
             else:
                 results.append('child succeeded')
