@@ -374,28 +374,6 @@ async def test_tg_wait_bad():
         await task
 
 
-class MyLogger(object):
-    def __init__(self):
-        self.logged = False
-
-    def error(self, msg, *args, **kwargs):
-        self.logged = True
-
-
-@pytest.mark.asyncio
-async def test_logging(caplog):
-    for daemon in (True, False):
-        # spawn
-        task = await spawn(my_raises(TypeError), daemon=daemon)
-        try:
-            await task
-            assert False
-        except TypeError:
-            pass
-
-    assert any('TypeError' in record.message for record in caplog.records)
-
-
 async def return_after_sleep(x, period=0.01):
     await sleep(period)
     return x

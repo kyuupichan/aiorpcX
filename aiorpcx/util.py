@@ -301,11 +301,3 @@ def signature_info(func):
         other_names = None
 
     return SignatureInfo(min_args, max_args, required_names, other_names)
-
-
-def check_task(logger, task):
-    if not task.cancelled():
-        try:
-            task.result()
-        except Exception:   # pylint: disable=broad-except
-            logger.error('task crashed: %r', task, exc_info=True)

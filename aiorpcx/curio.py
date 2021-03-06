@@ -41,10 +41,8 @@ from asyncio import (
 )
 from collections import deque
 from contextlib import suppress
-from functools import partial
-import logging
 
-from aiorpcx.util import instantiate_coroutine, check_task
+from aiorpcx.util import instantiate_coroutine
 
 
 __all__ = (
@@ -69,8 +67,6 @@ def spawn_sync(coro, *args, loop=None, daemon=False):
     loop = loop or get_event_loop()
     task = loop.create_task(coro)
     task._daemon = daemon
-    if not daemon:
-        task.add_done_callback(partial(check_task, logging))
     return task
 
 

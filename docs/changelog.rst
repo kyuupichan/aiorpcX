@@ -4,14 +4,13 @@ ChangeLog
 .. note:: The aiorpcX API changes regularly and is still unstable.  I hope to finalize it
           for a 1.0 release in the coming months.
 
-
-Version 0.20.0 (06 Mar 2021)
+Version 0.20.1 (06 Mar 2021)
 ----------------------------
 
 * this release contains some significant API changes which users will need to carefully check
   their code for.
-* the report_crash argument to spawn() is renamed daemon and inverted.  A daemon task's
-  result is ignored and crashes are not reported.
+* the report_crash argument to spawn() is removed; instead a new one is named daemon.  A
+  daemon task's exception (if any) is ignored by a TaskGroup.
 * the join() method of TaskGroup (and so also when TaskGroup is used as a context manager)
   does not raise the exception of failed tasks.  The full semantics are precisely
   described in the TaskGroup() docstring.  Briefly: any task being cancelled or raising an
