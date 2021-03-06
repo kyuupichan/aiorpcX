@@ -1480,6 +1480,36 @@ async def test_task_group_bad_result_exception():
         task1.cancel()
 
 
+@pytest.mark.asyncio
+async def test_daemon_tasks_not_waited_for_and_cancelled():
+    evt = Event()
+    async def wait_forever():
+        await evt.wait()
+
+    async with TaskGroup() as g:
+        d = await g.spawn(wait_forever, daemon=True)
+        t = await g.spawn(return_value, 5, 0.005)
+        assert g.tasks == {t}
+        assert g.daemons == {d}
+
+    assert d.cancelled()
+    assert g.result() == 5
+    assert g.exception() is None
+
+
+@pytest.mark.asyncio
+async def test_daemon_task_errors_ignored():
+    async with TaskGroup() as g:
+        d = await g.spawn(my_raises(ArithmeticError), daemon=True)
+        t = await g.spawn(return_value, 5, 0.005)
+        assert g.tasks == {t}
+        assert g.daemons == {d}
+        await sleep(0.01)
+
+    assert g.result() == 5
+    assert g.exception() is None
+
+
 def test_TaskTimeout_str():
     t = TaskTimeout(0.5)
     assert str(t) == 'task timed out after 0.5s'
