@@ -89,21 +89,21 @@ class TaskGroup:
     create a task in a group, it should be created using
     TaskGroup.spawn() or explicitly added using TaskGroup.add_task().
 
-    completed attribute: the first task that completed with a result
-    in the group.  Takes into account the wait option used in the
-    TaskGroup constructor.
+    completed attribute: the first task that completed with a valid result
+    in the group after calling join().  Takes into account the wait option
+    used in the TaskGroup constructor.
     '''
 
     def __init__(self, tasks=(), *, wait=all):
-        if wait not in (any, all, object):
+        if wait not in (any, all, object, None):
             raise ValueError('invalid wait argument')
         self._done = deque()
         self._pending = set()
         self._wait = wait
-        self._done_event = Event()
         self._logger = logging.getLogger(self.__class__.__name__)
         self._closed = False
         self.completed = None
+        self._semaphore = Semaphore(0)
         for task in tasks:
             self._add_task(task)
 
@@ -115,22 +115,16 @@ class TaskGroup:
             raise RuntimeError('task group is closed')
         task._task_group = self
         if task.done():
-            self._done.append(task)
+            self._on_done(task)
         else:
             self._pending.add(task)
             task.add_done_callback(self._on_done)
 
     def _on_done(self, task):
         task._task_group = None
-        self._pending.remove(task)
+        self._pending.discard(task)
         self._done.append(task)
-        self._done_event.set()
-        if self.completed is None:
-            if not task.cancelled() and not task.exception():
-                if self._wait is object and task.result() is None:
-                    pass
-                else:
-                    self.completed = task
+        self._semaphore.release()
 
     async def spawn(self, coro, *args):
         '''Create a new task that’s part of the group. Returns a Task
@@ -148,9 +142,8 @@ class TaskGroup:
         '''Returns the next completed task.  Returns None if no more tasks
         remain. A TaskGroup may also be used as an asynchronous iterator.
         '''
-        if not self._done and self._pending:
-            self._done_event.clear()
-            await self._done_event.wait()
+        if self._done or self._pending:
+            await self._semaphore.acquire()
         if self._done:
             return self._done.popleft()
         return None
@@ -167,7 +160,13 @@ class TaskGroup:
 
     async def join(self):
         '''Wait for tasks in the group to terminate according to the wait
-        policy for the group.
+        policy for the group.  None means wait for no tasks, cancelling all
+        those running.  all means wait for all tasks to finish.  any means
+        wait for the first task to finish and cancel the rest.  object means
+        wait for the first task to be cancelled or finish with a non-None result.
+
+        If a task raises an exception other than CancelledError, that exception
+        propagates from join().
 
         If the join() operation itself is cancelled, all remaining
         tasks in the group are also cancelled.
@@ -177,29 +176,36 @@ class TaskGroup:
 
         Once join() returns, no more tasks may be added to the task
         group.  Tasks can be added while join() is running.
+
+        Differences from curio proper: curio does not propagate exceptions.
         '''
         def errored(task):
-            return not task.cancelled() and task.exception()
+            return task.cancelled() or task.exception()
 
         try:
-            if self._wait in (all, object):
-                while True:
-                    task = await self.next_done()
-                    if task is None:
-                        return
-                    if errored(task):
-                        break
-                    if self._wait is object:
-                        if task.cancelled() or task.result() is not None:
-                            return
-            else:  # any
+            # Wait for no-one; all tasks are cancelled
+            if self._wait is None:
+                return
+
+            while True:
                 task = await self.next_done()
-                if task is None or not errored(task):
+                if task is None:
+                    return
+
+                # Set self.completed if not yet set; unless wait is object and
+                if (self.completed is None and not errored(task)
+                        and not (self._wait is object and task.result() is None)):
+                    self.completed = task
+
+                # Cause errors to be propagated
+                if errored(task):
+                    break
+                if self._wait is any or (self._wait is object and self.completed):
                     return
         finally:
             await self.cancel_remaining()
 
-        if errored(task):
+        if not task.cancelled():
             raise task.exception()
 
     async def cancel_remaining(self):

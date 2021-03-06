@@ -37,23 +37,37 @@ async def test_run_in_thread():
 
 
 @pytest.mark.asyncio
-async def test_next_done():
+async def test_next_done_1():
     t = TaskGroup()
     assert t.completed is None
     assert await t.next_done() is None
     assert await t.next_done() is None
 
+
+@pytest.mark.asyncio
+async def test_next_done_2():
     tasks = ()
     t = TaskGroup(tasks)
     assert t.completed is None
     assert await t.next_done() is None
+    await t.join()
+    assert t.completed is None
 
+
+@pytest.mark.asyncio
+async def test_next_done_3():
     tasks = (await spawn(sleep, 0.01), await spawn(sleep, 0.02))
     t = TaskGroup(tasks)
     assert (await t.next_done(), await t.next_done()) == tasks
-    assert t.completed is tasks[0]
+    assert await t.next_done() is None
+    assert t.completed is None
+    await t.join()
+    assert t.completed is None
     assert await t.next_done() is None
 
+
+@pytest.mark.asyncio
+async def test_next_done_4():
     tasks = (await spawn(sleep, 0), await spawn(sleep, 0.01))
     tasks[0].cancel()
     await sleep(0)
@@ -61,13 +75,19 @@ async def test_next_done():
     assert (await t.next_done(), await t.next_done()) == tasks
     assert await t.next_done() is None
 
-    tasks = (await spawn(sleep(0.002)), await spawn(sleep, 0.001))
+
+@pytest.mark.asyncio
+async def test_next_done_5():
+    tasks = (await spawn(sleep(0.02)), await spawn(sleep, 0.01), await spawn(sleep, 0.03))
     t = TaskGroup(tasks)
     assert await t.next_done() == tasks[1]
     assert await t.next_done() == tasks[0]
-    assert await t.next_done() is None
-    assert t.completed is tasks[1]
+    await t.join()
+    assert t.completed is tasks[2]
 
+
+@pytest.mark.asyncio
+async def test_next_done_6():
     tasks = (await spawn(sleep, 0.02), await spawn(sleep, 0.01))
     for task in tasks:
         task.cancel()
@@ -153,6 +173,15 @@ async def test_tg_cm_all():
 
 
 @pytest.mark.asyncio
+async def test_tg_cm_none():
+    tasks = [await spawn(sleep, x/200) for x in range(1, 5)]
+    async with TaskGroup(tasks, wait=None) as t:
+        pass
+    assert all(task.cancelled() for task in tasks)
+    assert t.completed is None
+
+
+@pytest.mark.asyncio
 async def test_tg_cm_any():
     tasks = [await spawn(sleep, x) for x in (0.1, 0.05, -1)]
     async with TaskGroup(tasks, wait=any) as t:
@@ -164,7 +193,7 @@ async def test_tg_cm_any():
 
 
 @pytest.mark.asyncio
-async def test_tg_join_object():
+async def test_tg_join_object_1():
     tasks = [await spawn(return_value(None, 0.01)),
              await spawn(return_value(3, 0.02))]
     t = TaskGroup(tasks, wait=object)
@@ -173,15 +202,18 @@ async def test_tg_join_object():
     assert tasks[1].result() == 3
     assert t.completed is tasks[1]
 
+
+@pytest.mark.asyncio
+async def test_tg_join_object_2():
     tasks = [await spawn(return_value(None, 0.01)),
              await spawn(return_value(4, 0.02)),
-             await spawn(return_value(2, 0.1))]
+             await spawn(return_value(2, 2))]
     t = TaskGroup(tasks, wait=object)
     await t.join()
+    assert t.completed is tasks[1]
     assert tasks[0].result() == None
     assert tasks[1].result() == 4
     assert tasks[2].cancelled()
-    assert t.completed is tasks[1]
 
 
 @pytest.mark.asyncio
@@ -309,7 +341,7 @@ async def test_tg_closed():
 async def test_tg_wait_bad():
     tasks = [await spawn(sleep, x/200) for x in range(5, 0, -1)]
     with pytest.raises(ValueError):
-        TaskGroup(tasks, wait=None)
+        TaskGroup(tasks, wait=0)
     assert not any(task.cancelled() for task in tasks)
     for task in tasks:
         await task
@@ -1384,6 +1416,22 @@ async def test_task_group_use_error():
 async def test_task_group_object_cancel():
     try:
         async with TaskGroup(wait=object) as g:
+            task1 = await g.spawn(sleep, 1)
+            task2 = await g.spawn(sleep, 2)
+            await sleep(0.001)
+            task1.cancel()
+    except CancelledError:
+        assert False
+    else:
+        assert task1.cancelled()
+        assert task2.cancelled()
+        assert g.completed is None
+
+
+@pytest.mark.asyncio
+async def test_task_group_all_cancel():
+    try:
+        async with TaskGroup(wait=all) as g:
             task1 = await g.spawn(sleep, 1)
             task2 = await g.spawn(sleep, 2)
             await sleep(0.001)
