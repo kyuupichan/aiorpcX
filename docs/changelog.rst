@@ -5,6 +5,28 @@ ChangeLog
           for a 1.0 release in the coming months.
 
 
+Version 0.20.0 (06 Mar 2021)
+----------------------------
+
+* this release contains some significant API changes which users will need to carefully check
+  their code for.
+* the report_crash argument to spawn() is renamed daemon and inverted.  A daemon task's
+  result is ignored and crashes are not reported.
+* the join() method of TaskGroup (and so also when TaskGroup is used as a context manager)
+  does not raise the exception of failed tasks.  The full semantics are precisely
+  described in the TaskGroup() docstring.  Briefly: any task being cancelled or raising an
+  exception causes join() to finish and all remaining tasks, including daemon tasks, to be
+  cancelled.  join() does not propagate task exceptions.
+* the cancel_remaining() method of TaskGroup does not propagate any task exceptions
+* TaskGroup supports the additional attributes 'tasks' and 'daemons'.  Also, after join()
+  has completed, result() returns the result (or raises the exception) of the first
+  completed task.  exception() returns the exception (if any) of the first completed task.
+  results() returns the results of all tasks and exceptions() returns the exceptions
+  raised by all tasks.  daemon tasks are ignored.
+* The above changes bring the implementation in line with curio proper and the semantic
+  changes it made over a year ago, and ensure that join() behaves consistently when called
+  more than once.
+
 Version 0.18.4 (20 Nov 2019)
 ----------------------------
 

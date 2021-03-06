@@ -116,6 +116,31 @@ async def test_next_result():
 
 
 @pytest.mark.asyncio
+async def test_tg_results_exceptions_good():
+    tasks = [
+        await spawn(return_value(1, 0.003)),
+        await spawn(return_value(2, 0.002)),
+        await spawn(return_value(3, 0.001)),
+    ]
+    async with TaskGroup(tasks) as t:
+        pass
+    assert set(t.results()) == {1, 2, 3}
+    assert t.exceptions() == [None] * 3
+
+
+@pytest.mark.asyncio
+async def test_tg_results_exceptions_bad():
+    async with TaskGroup() as t:
+        task1 = await t.spawn(sleep, 1)
+        task2 = await t.spawn(sleep, 2)
+        await sleep(0.001)
+        task1.cancel()
+    with pytest.raises(CancelledError):
+        t.results()
+    assert all(isinstance(e, CancelledError) for e in t.exceptions())
+
+
+@pytest.mark.asyncio
 async def test_tg_spawn():
     t = TaskGroup()
     task = await t.spawn(sleep, 0.01)
@@ -201,7 +226,7 @@ async def test_tg_join_object_1():
     assert tasks[0].result() == None
     assert tasks[1].result() == 3
     assert t.completed is tasks[1]
-
+    assert t.result() == 3
 
 @pytest.mark.asyncio
 async def test_tg_join_object_2():
@@ -243,23 +268,24 @@ async def test_tg_join_errored():
         tasks = [await spawn(sleep, x/200) for x in range(5, 0, -1)]
         t = TaskGroup(tasks, wait=wait)
         bad_task = await t.spawn(my_raises(ArithmeticError))
-        with pytest.raises(ArithmeticError):
-            await t.join()
+        await t.join()
         assert all(task.cancelled() for task in tasks)
         assert bad_task.done() and not bad_task.cancelled()
-        assert t.completed is None
+        assert t.completed is bad_task
 
 
 @pytest.mark.asyncio
 async def test_tg_cm_errored():
     for wait in (all, any, object):
         tasks = [await spawn(sleep, x/200) for x in range(5, 0, -1)]
-        with pytest.raises(EOFError):
-            async with TaskGroup(tasks, wait=wait) as t:
-                bad_task = await t.spawn(my_raises(EOFError))
+        async with TaskGroup(tasks, wait=wait) as t:
+            bad_task = await t.spawn(my_raises(EOFError))
         assert all(task.cancelled() for task in tasks)
         assert bad_task.done() and not bad_task.cancelled()
-        assert t.completed is None
+        assert t.completed is bad_task
+        with pytest.raises(EOFError):
+            t.result()
+        assert isinstance(t.exception(), EOFError)
 
 
 @pytest.mark.asyncio
@@ -270,23 +296,23 @@ async def test_tg_join_errored_past():
         tasks[1].cancel()
         await sleep(0.001)
         good_task = await t.spawn(return_value(3, 0.001))
-        with pytest.raises(AttributeError):
-            await t.join()
+        await t.join()
         assert good_task.cancelled()
-        assert t.completed is None
+        assert t.completed is tasks[0]
+        assert isinstance(t.exception(), AttributeError)
 
 
 @pytest.mark.asyncio
 async def test_cm_join_errored_past():
     for wait in (all, any, object):
         tasks = [await spawn(my_raises, BufferError) for n in range(3)]
-        with pytest.raises(BufferError):
-            async with TaskGroup(tasks, wait=wait) as t:
-                tasks[1].cancel()
-                await sleep(0.001)
-                good_task = await t.spawn(return_value(3, 0.001))
+        async with TaskGroup(tasks, wait=wait) as t:
+            tasks[1].cancel()
+            await sleep(0.001)
+            good_task = await t.spawn(return_value(3, 0.001))
         assert good_task.cancelled()
-        assert t.completed is None
+        assert t.completed is tasks[0]
+        assert isinstance(t.exception(), BufferError)
 
 
 @pytest.mark.asyncio
@@ -301,12 +327,13 @@ async def test_cm_raises():
 @pytest.mark.asyncio
 async def test_cm_add_later():
     tasks = [await spawn(sleep, 0) for n in range(3)]
-    with pytest.raises(LookupError):
-        async with TaskGroup(tasks) as t:
-            await sleep(0.001)
-            task = await t.spawn(my_raises, LookupError)
+    async with TaskGroup(tasks) as t:
+        await sleep(0.001)
+        task = await t.spawn(my_raises, LookupError)
     assert all(task.result() is None for task in tasks)
     assert t.completed in tasks
+    assert t.result() is None
+    assert t.exception() is None
 
 
 @pytest.mark.asyncio
@@ -357,9 +384,9 @@ class MyLogger(object):
 
 @pytest.mark.asyncio
 async def test_logging(caplog):
-    for report_crash in (True, False):
+    for daemon in (True, False):
         # spawn
-        task = await spawn(my_raises(TypeError), report_crash=report_crash)
+        task = await spawn(my_raises(TypeError), daemon=daemon)
         try:
             await task
             assert False
@@ -1157,6 +1184,8 @@ async def test_task_any_cancel():
 
         assert t1.result() == 2
         assert t1 == g.completed
+        assert g.result() == 2
+        assert g.exception() is None
         assert t2.cancelled()
         assert t3.cancelled()
 
@@ -1174,15 +1203,15 @@ async def test_task_any_error():
         return x + y
 
     async def main():
-        try:
-            async with TaskGroup(wait=any) as g:
-                t1 = await g.spawn(child, 1, '1')
-                t2 = await g.spawn(child2, 2, 2)
-                t3 = await g.spawn(child2, 3, 3)
-        except TypeError as e:
-            assert e == t1.exception()
-        else:
-            assert False
+        async with TaskGroup(wait=any) as g:
+            t1 = await g.spawn(child, 1, '1')
+            t2 = await g.spawn(child2, 2, 2)
+            t3 = await g.spawn(child2, 3, 3)
+        assert isinstance(t1.exception(), TypeError)
+        assert g.completed is t1
+        with pytest.raises(TypeError):
+            g.result()
+        assert g.exception() is t1.exception()
         assert t2.cancelled()
         assert t3.cancelled()
 
@@ -1216,15 +1245,12 @@ async def test_task_group_error():
         await evt.wait()
 
     async def main():
-        try:
-            async with TaskGroup() as g:
-                t1 = await g.spawn(child, 1, 1)
-                t2 = await g.spawn(child, 2, 2)
-                t3 = await g.spawn(child, 3, 'bad')
-        except TypeError as e:
-            assert e == t3.exception()
-        else:
-            assert False
+        async with TaskGroup() as g:
+            t1 = await g.spawn(child, 1, 1)
+            t2 = await g.spawn(child, 2, 2)
+            t3 = await g.spawn(child, 3, 'bad')
+        assert g.completed is t3
+        assert g.exception() == t3.exception()
         assert t1.cancelled()
         assert t2.cancelled()
 
@@ -1265,18 +1291,14 @@ async def test_task_group_multierror():
         await evt.wait()
 
     async def main():
-        try:
-            async with TaskGroup() as g:
-                t1 = await g.spawn(child, RuntimeError)
-                t2 = await g.spawn(child, MemoryError)
-                t3 = await g.spawn(child, None)
-                await sleep(0)
-                evt.set()
-        except (RuntimeError, MemoryError) as e:
-            assert isinstance(t1.exception(), RuntimeError)
-            assert isinstance(t2.exception(), MemoryError)
-        else:
-            assert False
+        async with TaskGroup() as g:
+            t1 = await g.spawn(child, RuntimeError)
+            t2 = await g.spawn(child, MemoryError)
+            t3 = await g.spawn(child, None)
+            await sleep(0)
+            evt.set()
+        assert isinstance(t1.exception(), RuntimeError)
+        assert isinstance(t2.exception(), MemoryError)
 
     await main()
 
@@ -1412,36 +1434,50 @@ async def test_task_group_use_error():
 
     await main()
 
+
 @pytest.mark.asyncio
-async def test_task_group_object_cancel():
-    try:
+async def test_task_group_cancel_task():
+    for wait in (all, object, any):
         async with TaskGroup(wait=object) as g:
             task1 = await g.spawn(sleep, 1)
             task2 = await g.spawn(sleep, 2)
             await sleep(0.001)
             task1.cancel()
-    except CancelledError:
-        assert False
-    else:
         assert task1.cancelled()
         assert task2.cancelled()
-        assert g.completed is None
+        assert g.completed is task1
+        assert isinstance(g.exception(), CancelledError)
+        with pytest.raises(CancelledError):
+            g.result()
 
 
 @pytest.mark.asyncio
-async def test_task_group_all_cancel():
-    try:
-        async with TaskGroup(wait=all) as g:
-            task1 = await g.spawn(sleep, 1)
-            task2 = await g.spawn(sleep, 2)
-            await sleep(0.001)
-            task1.cancel()
-    except CancelledError:
-        assert False
-    else:
-        assert task1.cancelled()
-        assert task2.cancelled()
-        assert g.completed is None
+async def test_task_group_cancel_task():
+    async with TaskGroup(wait=None) as g:
+        task1 = await g.spawn(sleep, 1)
+        task2 = await g.spawn(sleep, 2)
+    assert task1.cancelled()
+    assert task2.cancelled()
+    assert g.completed is None
+    assert g.exception() is None
+    with pytest.raises(RuntimeError):
+        assert g.result() is None
+
+
+@pytest.mark.asyncio
+async def test_task_group_bad_result_exception():
+    async with TaskGroup(wait=None) as g:
+        task1 = await g.spawn(sleep, 1)
+        await sleep(0.001)
+        with pytest.raises(RuntimeError):
+            g.result()
+        with pytest.raises(RuntimeError):
+            g.exception()
+        with pytest.raises(RuntimeError):
+            g.results()
+        with pytest.raises(RuntimeError):
+            g.exceptions()
+        task1.cancel()
 
 
 def test_TaskTimeout_str():
