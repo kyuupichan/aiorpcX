@@ -160,6 +160,7 @@ class TaskGroup:
             self._pending.add(task)
             task.add_done_callback(self._on_done)
 
+    @property
     def result(self):
         ''' The result of the first completed task.  Should only be called after join()
         has returned.'''
@@ -169,6 +170,7 @@ class TaskGroup:
             raise RuntimeError('no task successfully completed')
         return self.completed.result()
 
+    @property
     def exception(self):
         ''' The exception of the first completed task.  Should only be called after join()
         has returned.'''
@@ -176,6 +178,7 @@ class TaskGroup:
             raise RuntimeError('task group not yet terminated')
         return safe_exception(self.completed) if self.completed else None
 
+    @property
     def results(self):
         '''A list of all results collected by join() in no particular order.
 
@@ -185,6 +188,7 @@ class TaskGroup:
             raise RuntimeError('task group not yet terminated')
         return [task.result() for task in self.tasks]
 
+    @property
     def exceptions(self):
         '''A list of all exceptions collected by join() in no particular order.'''
         if not self._closed:
