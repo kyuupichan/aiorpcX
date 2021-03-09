@@ -40,7 +40,6 @@ from asyncio import (
     CancelledError, get_event_loop, Queue, Event, Lock, Semaphore, sleep, current_task
 )
 from collections import deque
-from contextlib import suppress
 
 from aiorpcx.util import instantiate_coroutine
 
@@ -251,18 +250,35 @@ class TaskGroup:
                                                                   and self.completed)):
                     return
         finally:
-            await self.cancel_remaining()
+            # Cancel everything but don't wait as cancellation can be ignored and our
+            # exception could be e.g. a timeout.
+            await self._cancel_remaining(wait=False)
+            self._closed = True
+
+    async def _cancel_remaining(self, wait):
+        '''Cancel all remaining tasks including daemons.  Wait for them to complete if wait is
+        True.
+        '''
+        def pop_task(task):
+            unfinished.remove(task)
+            if not unfinished:
+                all_done.set()
+
+        unfinished = self._pending.copy()
+        unfinished.update(self.daemons)
+        for task in unfinished:
+            task.cancel()
+        # Let the loop process the cancellations so the tasks are marked cancelled
+        await sleep(0)
+        if wait and unfinished:
+            all_done = Event()
+            for task in unfinished:
+                task.add_done_callback(pop_task)
+            await all_done.wait()
 
     async def cancel_remaining(self):
         '''Cancel all remaining tasks including daemons.'''
-        self._closed = True
-        task_list = list(self._pending)
-        task_list.extend(self.daemons)
-        for task in task_list:
-            task.cancel()
-        for task in task_list:
-            with suppress(BaseException):
-                await task
+        await self._cancel_remaining(wait=True)
 
     def closed(self):
         return self._closed
