@@ -1397,6 +1397,60 @@ async def test_task_group_object_cancel():
         assert g.completed is None
 
 
+@pytest.mark.asyncio
+async def test_timeout_on_join_with_stubborn_task():
+    evt = Event()
+
+    async def ignore_cancellation():
+        while True:
+            try:
+                await evt.wait()
+                break
+            except CancelledError as e:
+                pass
+
+
+    async with ignore_after(0.05):
+        async with TaskGroup() as g:
+            t = await g.spawn(ignore_cancellation)
+    # Clean teardown
+    evt.set()
+
+
+# See https://github.com/kyuupichan/aiorpcX/issues/37
+@pytest.mark.asyncio
+async def test_cancel_remaining_on_group_with_stubborn_task():
+    evt = Event()
+
+    async def run_forever():
+        while True:
+            try:
+                await evt.wait()
+                break
+            except CancelledError as e:
+                pass
+
+    async def run_group():
+        async with group:
+            await group.spawn(run_forever)
+
+    from asyncio import create_task
+
+    group = TaskGroup()
+    create_task(run_group())
+    await sleep(0.01)
+
+    try:
+        async with timeout_after(0.01):
+            await group.cancel_remaining()
+    except TaskTimeout:
+        pass
+
+    # Clean teardown
+    evt.set()
+    await sleep(0.001)
+
+
 def test_TaskTimeout_str():
     t = TaskTimeout(0.5)
     assert str(t) == 'task timed out after 0.5s'

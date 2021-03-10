@@ -205,20 +205,33 @@ class TaskGroup(object):
                 if task is None or not errored(task):
                     return
         finally:
-            await self.cancel_remaining()
+            # Cancel everything but don't wait as cancellation can be ignored and our
+            # exception could be e.g. a timeout.
+            await self.cancel_remaining(blocking=False)
 
         if errored(task):
             raise task.exception()
 
-    async def cancel_remaining(self):
-        '''Cancel all remaining tasks.'''
+    async def cancel_remaining(self, blocking=True):
+        '''Cancel all remaining tasks.  Wait for them to complete if blocking is True.'''
         self._closed = True
-        task_list = list(self._pending)
-        for task in task_list:
+        for task in self._pending:
             task.cancel()
-        for task in task_list:
-            with suppress(CancelledError):
-                await task
+
+        if blocking and self._pending:
+            def pop_task(task):
+                unfinished.remove(task)
+                if not unfinished:
+                    all_done.set()
+
+            unfinished = self._pending.copy()
+            for task in unfinished:
+                task.add_done_callback(pop_task)
+            all_done = Event()
+            await all_done.wait()
+        else:
+            # So loop processes cancellations
+            await sleep(0)
 
     def closed(self):
         return self._closed
