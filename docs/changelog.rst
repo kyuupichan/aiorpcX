@@ -5,6 +5,11 @@ ChangeLog
           for a 1.0 release in the coming months.
 
 
+Version 0.18.7 (10 Mar 2021)
+----------------------------
+
+* join() waiting when cancelled fix, also issue #37
+
 Version 0.18.4 (20 Nov 2019)
 ----------------------------
 
