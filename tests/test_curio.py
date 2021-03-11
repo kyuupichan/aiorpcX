@@ -99,7 +99,7 @@ async def test_next_done_6():
 
 @pytest.mark.asyncio
 async def test_next_deamons():
-    tasks = (await spawn(sleep, 0.02, daemon=True), await spawn(sleep, 0.01))
+    tasks = (await spawn(sleep, 0.1, daemon=True), await spawn(sleep, 0.001))
     t = TaskGroup(tasks)
     assert await t.next_done() == tasks[1]
     assert not tasks[0].done()

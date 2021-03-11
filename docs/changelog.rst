@@ -4,6 +4,28 @@ ChangeLog
 .. note:: The aiorpcX API changes regularly and is still unstable.  I hope to finalize it
           for a 1.0 release in the coming months.
 
+
+Version 0.21.0 (11 Mar 2021)
+----------------------------
+
+* There have been significant semantic and API changes for TaskGroups.  Their behaviour is
+  now consistent, reliable and they have the same semantics as curio.  As such I consider
+  their API finalized and stable.  In addition to the notes below for 0.20.x:
+
+* closed() became the attribute joined.
+* cancel_remaining() does not cancel daemonic tasks.  As before it waits for the
+  cancelled tasks to complete.
+* On return from join() all tasks including deamonic ones have been cancelled, but nothing
+  is waited for.  If leaving a TaskGroup context because of an exception,
+  cancel_remaining() - which can block - is called before join().
+
+Version 0.20.2 (10 Mar 2021)
+----------------------------
+
+* result, exception, results and exceptions are now attributes.  They raise a RuntimeError
+  if called before a TaskGroup's join() operation has returned.
+
+
 Version 0.20.1 (06 Mar 2021)
 ----------------------------
 

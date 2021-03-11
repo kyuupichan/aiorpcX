@@ -816,6 +816,7 @@ class TestMessageSession(object):
         framer = BitcoinFramer(magic=bytes(4))
         async with connect_message_session('localhost', msg_server_port, framer=framer) as session:
             await session.send_message((b'version', b''))
+        await sleep(0.01)
         assert in_caplog(caplog, 'bad network magic')
 
     @pytest.mark.asyncio
