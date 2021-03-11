@@ -109,6 +109,7 @@ class TaskGroup:
     completed: initially None, and set by join() to the first task in the group that
     finished.  Tasks removed from the group by calls to next_done() (and if wait is object
     tasks returning None) do not count.
+    joined: true if the task group join() operation has completed
 
     daemons: a set of all running daemonic tasks in the group.
     tasks: a set of all non-daemonic tasks in the group.
@@ -126,7 +127,7 @@ class TaskGroup:
         # Non-daemonic tasks that have completed
         self._done = deque()
         self._wait = wait
-        self._closed = False
+        self.joined = False
         self._semaphore = Semaphore(0)
         self.completed = None
         for task in tasks:
@@ -145,8 +146,8 @@ class TaskGroup:
         '''Add an already existing task to the task group.'''
         if hasattr(task, '_task_group'):
             raise RuntimeError('task is already part of a group')
-        if self._closed:
-            raise RuntimeError('task group is closed')
+        if self.joined:
+            raise RuntimeError('task group terminated')
         task._task_group = self
         daemon = getattr(task, '_daemon', False)
         if not daemon:
@@ -163,7 +164,7 @@ class TaskGroup:
     def result(self):
         ''' The result of the first completed task.  Should only be called after join()
         has returned.'''
-        if not self._closed:
+        if not self.joined:
             raise RuntimeError('task group not yet terminated')
         if not self.completed:
             raise RuntimeError('no task successfully completed')
@@ -173,7 +174,7 @@ class TaskGroup:
     def exception(self):
         ''' The exception of the first completed task.  Should only be called after join()
         has returned.'''
-        if not self._closed:
+        if not self.joined:
             raise RuntimeError('task group not yet terminated')
         return safe_exception(self.completed) if self.completed else None
 
@@ -183,14 +184,14 @@ class TaskGroup:
 
         If a task raised an exception or was cancelled then that exception will be raised.
         '''
-        if not self._closed:
+        if not self.joined:
             raise RuntimeError('task group not yet terminated')
         return [task.result() for task in self.tasks]
 
     @property
     def exceptions(self):
         '''A list of all exceptions collected by join() in no particular order.'''
-        if not self._closed:
+        if not self.joined:
             raise RuntimeError('task group not yet terminated')
         return [safe_exception(task) for task in self.tasks]
 
@@ -250,35 +251,36 @@ class TaskGroup:
                                                                   and self.completed)):
                     return
         finally:
-            # Cancel everything but don't wait as cancellation can be ignored and our
-            # exception could be e.g. a timeout.
-            await self.cancel_remaining(blocking=False)
-            self._closed = True
+            self.joined = True
+            # Cancel everything but don't block
+            await self._cancel_tasks(self._pending.union(self.daemons), False)
+            # Ensure the event loop has processed the cancellations when we return
+            # This is mainly for no-surprises and cleanliness, including in the testsuite
+            await sleep(0)
 
-    async def cancel_remaining(self, blocking=True):
-        '''Cancel all remaining tasks including daemons.  Wait for them to complete if wait is
-        True.
-        '''
-        unfinished = self._pending.union(self.daemons)
-        for task in unfinished:
+    async def _cancel_tasks(self, tasks, blocking):
+        '''Cancel the passed set of tasks.  Wait for them to complete if blocking.'''
+        for task in tasks:
             task.cancel()
 
-        if blocking and unfinished:
+        if blocking and tasks:
             def pop_task(task):
                 unfinished.remove(task)
                 if not unfinished:
                     all_done.set()
 
-            for task in unfinished:
-                task.add_done_callback(pop_task)
+            unfinished = set(tasks)
             all_done = Event()
+            for task in tasks:
+                task.add_done_callback(pop_task)
             await all_done.wait()
-        else:
-            # So loop processes cancellations
-            await sleep(0)
 
-    def closed(self):
-        return self._closed
+    async def cancel_remaining(self):
+        '''Cancel all remaining non-daemonic tasks and wait for them to complete.
+
+        If any task blocks cancellation this routine will not return.
+        '''
+        await self._cancel_tasks(self._pending, True)
 
     def __aiter__(self):
         return self
@@ -295,8 +297,7 @@ class TaskGroup:
     async def __aexit__(self, exc_type, exc_value, traceback):
         if exc_type:
             await self.cancel_remaining()
-        else:
-            await self.join()
+        await self.join()
 
 
 class TaskTimeout(CancelledError):

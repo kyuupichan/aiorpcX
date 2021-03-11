@@ -98,6 +98,17 @@ async def test_next_done_6():
 
 
 @pytest.mark.asyncio
+async def test_next_deamons():
+    tasks = (await spawn(sleep, 0.02, daemon=True), await spawn(sleep, 0.01))
+    t = TaskGroup(tasks)
+    assert await t.next_done() == tasks[1]
+    assert not tasks[0].done()
+    assert await t.next_done() is None
+    assert not tasks[0].done()
+    await tasks[0]
+
+
+@pytest.mark.asyncio
 async def test_next_result():
     t = TaskGroup()
     with pytest.raises(RuntimeError):
@@ -152,12 +163,21 @@ async def test_tg_spawn():
 
 @pytest.mark.asyncio
 async def test_tg_cancel_remaining():
-    tasks = [await spawn(sleep, x) for x in (0.001, 0.2, 0.3, 0.4)]
+    tasks = [await spawn(sleep, secs, daemon=daemon) for secs, daemon in
+             ((0.001, False), (0.2, True), (0.1, False), (0.1, False))]
     t = TaskGroup(tasks)
     assert await t.next_done()
     await t.cancel_remaining()
     assert not tasks[0].cancelled()
-    assert all(task.cancelled() for task in tasks[1:])
+    # This is a daemon so is not cancelled
+    assert not tasks[1].cancelled()
+    assert tasks[2].cancelled()
+    assert tasks[3].cancelled()
+    assert not t.joined
+    # join() cancels daemons
+    await t.join()
+    assert tasks[1].cancelled()
+    assert t.joined
 
 
 @pytest.mark.asyncio
@@ -350,13 +370,13 @@ async def test_tg_multiple_groups():
 
 
 @pytest.mark.asyncio
-async def test_tg_closed():
+async def test_tg_joined():
     task = await spawn(return_value(3))
     for wait in (all, any, object):
         t = TaskGroup()
-        assert not t.closed()
+        assert not t.joined
         await t.join()
-        assert t.closed()
+        assert t.joined
         with pytest.raises(RuntimeError):
             await t.spawn(my_raises, ImportError)
         with pytest.raises(RuntimeError):
@@ -1391,7 +1411,29 @@ async def test_task_group_cancel_remaining_waits():
         async with TaskGroup([task]) as g:
             await sleep(0)  # ensure the tasks are scheduled
             raise CancelledError
+    # Exiting the context with an exception (here, CancelledError) waits for non-daemonic tasks
+    # to finish
     assert task.done()
+
+
+@pytest.mark.asyncio
+async def test_task_group_cancel_remaining_doesnt_wait():
+    async def sleep_soundly():
+        try:
+            await sleep(0.01)
+        except CancelledError:
+            await sleep(0.01)
+
+    task = await spawn(sleep_soundly, daemon=True)
+    with pytest.raises(CancelledError):
+        async with TaskGroup([task]) as g:
+            await sleep(0)  # ensure the tasks are scheduled
+            raise CancelledError
+    # The task is daemonic so isn't waited for.
+    assert not task.done()
+    await task
+    assert task.done()
+    assert not task.cancelled()   # Didn't raise CancelledError
 
 
 @pytest.mark.asyncio
