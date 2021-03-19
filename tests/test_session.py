@@ -568,11 +568,11 @@ class TestRPCSession:
             with caplog.at_level(logging.INFO):
                 assert server.log_me is False
                 await session.send_request('echo', ['ping'])
-                assert caplog_count(caplog, '"method": "echo"') == 0
+                assert caplog_count(caplog, '"method":"echo"') == 0
 
                 server.log_me = True
                 await session.send_request('echo', ['ping'])
-                assert caplog_count(caplog, '"method": "echo"') == 1
+                assert caplog_count(caplog, '"method":"echo"') == 1
 
 
 class WireRPCSession(RPCSession):
