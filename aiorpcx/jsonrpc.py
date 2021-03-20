@@ -330,7 +330,7 @@ class JSONRPC:
     def encode_payload(cls, payload):
         '''Encode a Python object as JSON and convert it to bytes.'''
         try:
-            return json.dumps(payload).encode()
+            return json.dumps(payload, separators=(',', ':')).encode()
         except TypeError:
             msg = f'JSON payload encoding error: {payload}'
             raise ProtocolError(cls.INTERNAL_ERROR, msg) from None

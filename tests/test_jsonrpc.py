@@ -97,15 +97,15 @@ def test_parse_errors(protocol_no_auto):
         protocol.message_to_item(message)
     assert e.value.code == JSONRPC.PARSE_ERROR
     assert 'messages must be encoded in UTF-8' in e.value.message
-    assert b'"id": null' in e.value.error_message
+    assert b'"id":null' in e.value.error_message
 
     # Bad JSON
-    message = b'{"foo", }'
+    message = b'{"foo",}'
     with pytest.raises(ProtocolError) as e:
         protocol.message_to_item(message)
     assert e.value.code == JSONRPC.PARSE_ERROR
     assert 'invalid JSON' in e.value.message
-    assert b'"id": null' in e.value.error_message
+    assert b'"id":null' in e.value.error_message
 
     messages = [b'2', b'"foo"', b'2.78']
     for message in messages:
@@ -113,7 +113,7 @@ def test_parse_errors(protocol_no_auto):
             protocol.message_to_item(message)
         assert e.value.code == JSONRPC.INVALID_REQUEST
         assert 'must be a dictionary' in e.value.message
-        assert b'"id": null' in e.value.error_message
+        assert b'"id":null' in e.value.error_message
 
 
 # Requests
@@ -200,7 +200,7 @@ def test_JSONRPCv1_ill_formed():
         protocol.message_to_item(message)
     assert e.value.code == JSONRPC.INVALID_REQUEST
     assert 'no "id"' in e.value.message
-    assert b'"id": null' in e.value.error_message
+    assert b'"id":null' in e.value.error_message
 
 
 def test_bad_requests(protocol_no_auto):
@@ -211,7 +211,7 @@ def test_bad_requests(protocol_no_auto):
         payload_to_item(protocol, payload)
     assert e.value.code == JSONRPC.INVALID_ARGS
     assert 'invalid request arguments' in e.value.message
-    assert b'"id": 0' in e.value.error_message
+    assert b'"id":0' in e.value.error_message
 
 
 def test_good_requests(protocol_no_auto):
@@ -421,7 +421,7 @@ def test_JSONRPCv2_required_jsonrpc():
     assert e.value.code == JSONRPC.INVALID_REQUEST
     assert 'jsonrpc' in e.value.message
     # Respond to ill-formed "notification"
-    assert b'"id": null' in e.value.error_message
+    assert b'"id":null' in e.value.error_message
 
     payload = {"method": "f", "id": 0}
     with pytest.raises(ProtocolError) as e:
@@ -430,7 +430,7 @@ def test_JSONRPCv2_required_jsonrpc():
     assert e.value.code == JSONRPC.INVALID_REQUEST
     assert 'jsonrpc' in e.value.message
     assert b'jsonrpc' in e.value.error_message
-    assert b'"id": 0' in e.value.error_message
+    assert b'"id":0' in e.value.error_message
 
 
 def test_JSONRPCv1_errors():
@@ -501,7 +501,7 @@ def test_batch_not_allowed(protocol):
             protocol.message_to_item(b'[]')
         assert e.value.code == JSONRPC.INVALID_REQUEST
         assert 'dictionary' in e.value.message
-        assert b'"id": null' in e.value.error_message
+        assert b'"id":null' in e.value.error_message
 
         batch = Batch([Request('', [])])
         with pytest.raises(ProtocolError) as e:
@@ -535,8 +535,8 @@ def test_batch_message_from_parts(protocol):
 
 def test_encode_payload(protocol):
     assert protocol.encode_payload(2) == b'2'
-    assert protocol.encode_payload([2, 3]) == b'[2, 3]'
-    assert protocol.encode_payload({"a": 1}) == b'{"a": 1}'
+    assert protocol.encode_payload([2, 3]) == b'[2,3]'
+    assert protocol.encode_payload({"a": 1}) == b'{"a":1}'
     assert protocol.encode_payload(True) == b'true'
     assert protocol.encode_payload(False) == b'false'
     assert protocol.encode_payload(None) == b'null'
