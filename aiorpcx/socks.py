@@ -33,7 +33,7 @@ import socket
 import struct
 from functools import partial
 
-from aiorpcx.util import NetAddress
+from aiorpcx.util import NetAddress, UnixAddress
 
 
 __all__ = ('SOCKSUserAuth', 'SOCKSRandomAuth', 'SOCKS4', 'SOCKS4a', 'SOCKS5', 'SOCKSProxy',
@@ -272,11 +272,11 @@ class SOCKS5(SOCKSBase):
 class SOCKSProxy:
 
     def __init__(self, address, protocol, auth):
-        '''A SOCKS proxy at a NetAddress following a SOCKS protocol.
+        '''A SOCKS proxy at a NetAddress or UnixAddress following a SOCKS protocol.
 
         auth is an authentication method to use when connecting, or None.
         '''
-        if not isinstance(address, NetAddress):
+        if not isinstance(address, (NetAddress, UnixAddress)):
             address = NetAddress.from_string(address)
         self.address = address
         self.protocol = protocol
@@ -314,8 +314,15 @@ class SOCKSProxy:
         '''
         loop = asyncio.get_event_loop()
 
-        for info in await loop.getaddrinfo(str(self.address.host), self.address.port,
-                                           type=socket.SOCK_STREAM):
+        if isinstance(self.address, UnixAddress):
+            # Unix socket
+            infos = [(socket.AF_UNIX, socket.SOCK_STREAM, 0, '', self.address.path)]
+        else:
+            # IP socket
+            infos = await loop.getaddrinfo(str(self.address.host), self.address.port,
+                                           type=socket.SOCK_STREAM)
+
+        for info in infos:
             # This object has state so is only good for one connection
             client = self.protocol(remote_address, self.auth)
             sock = socket.socket(family=info[0])
