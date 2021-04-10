@@ -29,7 +29,7 @@ jobs:
       codeCoverageTool: cobertura
       summaryFileLocation: coverage.xml
   - bash: |
-      COVERALLS_REPO_TOKEN=$(COVERALLS_REPO_TOKEN) coveralls
+      COVERALLS_REPO_TOKEN=$(CRT) coveralls
     displayName: 'Coveralls'
   - bash: |
       pycodestyle --max-line-length=100 aiorpcx/*.py
