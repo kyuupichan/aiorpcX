@@ -77,7 +77,8 @@ class RSTransport(asyncio.Protocol):
             # This would throw if called on a closed SSL transport.  Fixed in asyncio in
             # Python 3.6.1 and 3.5.4
             peername = transport.get_extra_info('peername')
-            self._remote_address = NetAddress(peername[0], peername[1])
+            if peername:
+                self._remote_address = NetAddress(peername[0], peername[1])
         self.session = self.session_factory(self)
         self._framer = self._framer or self.session.default_framer()
         self._process_messages_task = self.loop.create_task(self.process_messages())
