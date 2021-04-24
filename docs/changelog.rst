@@ -5,6 +5,12 @@ ChangeLog
           for a 1.0 release in the coming months.
 
 
+Version 0.21.1 (24 Apr 2021)
+----------------------------
+
+* handle peername of None in network code
+* strip redundant whitespace from JSON (SomberNight)
+
 Version 0.21.0 (11 Mar 2021)
 ----------------------------
 
