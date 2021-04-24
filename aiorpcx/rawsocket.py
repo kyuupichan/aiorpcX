@@ -87,9 +87,6 @@ class RSTransport(asyncio.Protocol):
         '''Called by asyncio when the connection closes.
 
         Tear down things done in connection_made.'''
-        # If works around a uvloop bug; see https://github.com/MagicStack/uvloop/issues/246
-        if not self._asyncio_transport:
-            return
         # Release waiting tasks
         self._can_send.set()
         self._framer.fail(ConnectionLostError())
