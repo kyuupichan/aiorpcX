@@ -5,6 +5,11 @@ ChangeLog
           for a 1.0 release in the coming months.
 
 
+Version 0.22.0 (25 Apr 2021)
+----------------------------
+
+* join() waits for all cancelled tasks to finish, including daemonic ones
+
 Version 0.21.1 (24 Apr 2021)
 ----------------------------
 
