@@ -251,12 +251,12 @@ class TaskGroup:
                                                                   and self.completed)):
                     return
         finally:
-            self.joined = True
             # Cancel everything but don't block
             await self._cancel_tasks(self._pending.union(self.daemons), False)
             # Ensure the event loop has processed the cancellations when we return
             # This is mainly for no-surprises and cleanliness, including in the testsuite
             await sleep(0)
+            self.joined = True
 
     async def _cancel_tasks(self, tasks, blocking):
         '''Cancel the passed set of tasks.  Wait for them to complete if blocking.'''
