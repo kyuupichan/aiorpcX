@@ -1417,7 +1417,7 @@ async def test_task_group_cancel_remaining_waits():
 
 
 @pytest.mark.asyncio
-async def test_task_group_cancel_remaining_doesnt_wait():
+async def test_task_group_cancel_remaining_daemonic_waits():
     async def sleep_soundly():
         try:
             await sleep(0.01)
@@ -1429,9 +1429,7 @@ async def test_task_group_cancel_remaining_doesnt_wait():
         async with TaskGroup([task]) as g:
             await sleep(0)  # ensure the tasks are scheduled
             raise CancelledError
-    # The task is daemonic so isn't waited for.
-    assert not task.done()
-    await task
+    # The task is daemonic but is still waited for.
     assert task.done()
     assert not task.cancelled()   # Didn't raise CancelledError
 
@@ -1528,26 +1526,6 @@ async def test_daemon_task_errors_ignored():
 
     assert g.result == 5
     assert g.exception is None
-
-
-@pytest.mark.asyncio
-async def test_timeout_on_join_with_stubborn_task():
-    evt = Event()
-
-    async def ignore_cancellation():
-        while True:
-            try:
-                await evt.wait()
-                break
-            except CancelledError as e:
-                pass
-
-
-    async with ignore_after(0.05):
-        async with TaskGroup() as g:
-            t = await g.spawn(ignore_cancellation)
-    # Clean teardown
-    evt.set()
 
 
 # See https://github.com/kyuupichan/aiorpcX/issues/37
