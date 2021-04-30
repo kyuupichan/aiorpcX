@@ -744,8 +744,10 @@ class MessageServer(MessageSession):
 
     @classmethod
     async def current_server(self):
-        await sleep(0.001)
-        return self._current_session
+        while True:
+            await sleep(0.001)
+            if self._current_session:
+                return self._current_session
 
     async def connection_lost(self):
         await super().connection_lost()
@@ -761,7 +763,7 @@ class MessageServer(MessageSession):
         elif command == b'cancel':
             raise CancelledError
         elif command == b'sleep':
-            await sleep(0.1)
+            await sleep(0.2)
 
 @pytest.fixture
 def msg_server_port(event_loop, unused_tcp_port):
@@ -868,7 +870,7 @@ class TestMessageSession(object):
             server.processing_timeout = 0.01
             with caplog.at_level(logging.INFO):
                 await session.send_message((b'sleep', b''))
-                await sleep(0.02)
+                await sleep(0.05)
             assert server.errors == 1
         assert in_caplog(caplog, 'timed out')
 
