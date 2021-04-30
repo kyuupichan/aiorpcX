@@ -253,9 +253,6 @@ class TaskGroup:
         finally:
             # Cancel everything including daemons
             await self._cancel_tasks(self._pending.union(self.daemons))
-            # Ensure the event loop has processed the cancellations when we return
-            # This is mainly for no-surprises and cleanliness, including in the testsuite
-            await sleep(0)
             self.joined = True
 
     async def _cancel_tasks(self, tasks):
