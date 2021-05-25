@@ -218,8 +218,12 @@ class SessionBase:
         raise NotImplementedError
 
     async def process_messages(self, recv_message):
-        async with self._group:
-            await self._group.spawn(self._process_messages, recv_message)
+        async with self._group as group:
+            await group.spawn(self._process_messages, recv_message)
+
+            # Remove tasks
+            async for task in group:
+                task.result()
 
     def unanswered_request_count(self):
         '''The number of requests received but not yet answered.'''
