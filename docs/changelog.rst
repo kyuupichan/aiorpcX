@@ -5,6 +5,12 @@ ChangeLog
           for a 1.0 release in the coming months.
 
 
+Version 0.22.1 (25 May 2021)
+----------------------------
+
+* release tasks as they complete in the task group; this might appear as a memory-leak for
+  long-standing sessions
+
 Version 0.22.0 (25 Apr 2021)
 ----------------------------
 

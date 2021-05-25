@@ -8,7 +8,7 @@ from .util import *
 from .websocket import *
 
 
-_version_str = '0.22.0'
+_version_str = '0.22.1'
 _version = tuple(int(part) for part in _version_str.split('.'))
 
 
