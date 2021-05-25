@@ -64,7 +64,6 @@ class RSTransport(asyncio.Protocol):
             pass
         finally:
             self._closed_event.set()
-            await self.session.connection_lost()
 
     async def receive_message(self):
         return await self._framer.receive_message()

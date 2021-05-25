@@ -98,15 +98,6 @@ def server_port(unused_tcp_port, event_loop):
     event_loop.run_until_complete(close_all())
 
 
-class TestSessionBase:
-
-    @pytest.mark.asyncio
-    async def test_abstract(self):
-        s = SessionBase
-        with pytest.raises(NotImplementedError):
-            await s._process_messages(None, None)
-
-
 class TestRPCSession:
 
     @pytest.mark.asyncio

@@ -215,7 +215,11 @@ class SessionBase:
         self._incoming_concurrency.set_target(target)
 
     async def _process_messages(self, recv_message):
-        raise NotImplementedError
+        try:
+            await self._process_messages_loop(recv_message)
+        finally:
+            # Call the hook provided for derived classes
+            await self.connection_lost()
 
     async def process_messages(self, recv_message):
         async with self._group as group:
@@ -265,7 +269,7 @@ class MessageSession(SessionBase):
     '''Session class for protocols where messages are not tied to responses,
     such as the Bitcoin protocol.
     '''
-    async def _process_messages(self, recv_message):
+    async def _process_messages_loop(self, recv_message):
         while True:
             try:
                 message = await recv_message()
@@ -437,7 +441,9 @@ class RPCSession(SessionBase):
             self.logger.info(f'changing outgoing request concurrency to {target} from {current}')
             self._outgoing_concurrency.set_target(target)
 
-    async def _process_messages(self, recv_message):
+    async def _process_messages_loop(self, recv_message):
+        # The loop will exit when recv_message raises a ConnectionLost error; which is also
+        # arranged when close() is called.
         while True:
             try:
                 message = await recv_message()
@@ -513,12 +519,10 @@ class RPCSession(SessionBase):
                 if len(self._req_times) >= self.recalibrate_count:
                     self._recalc_concurrency()
 
+    # External API
     async def connection_lost(self):
-        await super().connection_lost()
-        # Cancel pending requests and message processing
         self.connection.cancel_pending_requests()
 
-    # External API
     def default_connection(self):
         '''Return a default connection if the user provides none.'''
         return JSONRPCConnection(JSONRPCv2)

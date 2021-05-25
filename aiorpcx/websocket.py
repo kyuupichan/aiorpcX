@@ -72,8 +72,6 @@ class WSTransport:
             await self.session.process_messages(self.recv_message)
         except websockets.ConnectionClosed:
             pass
-        finally:
-            await self.session.connection_lost()
 
     # API exposed to session
     async def write(self, framed_message):
