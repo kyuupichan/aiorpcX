@@ -30,6 +30,8 @@ __all__ = ('connect_rs', 'serve_rs')
 
 import asyncio
 from functools import partial
+import ssl
+import warnings
 
 from aiorpcx.curio import Event, timeout_after, TaskTimeout
 from aiorpcx.session import RPCSession, SessionBase, SessionKind
@@ -153,11 +155,32 @@ class RSClient:
         self.loop = kwargs.get('loop', asyncio.get_event_loop())
         self.kwargs = kwargs
 
+        # ensure certificates can be verified
+        sslctx = self.kwargs.get('ssl')
+        if isinstance(sslctx, ssl.SSLContext) and sslctx.verify_mode is ssl.VerifyMode.CERT_NONE:
+            warnings.warn('tls context has verification disabled, replacing with default')
+            self.backup_ctx = sslctx
+            self.kwargs['ssl'] = True
+        else:
+            self.backup_ctx = None
+
     async def create_connection(self):
         '''Initiate a connection.'''
         connector = self.proxy or self.loop
-        return await connector.create_connection(
-            self.protocol_factory, self.host, self.port, **self.kwargs)
+        try:
+            return await connector.create_connection(
+                self.protocol_factory, self.host, self.port, **self.kwargs)
+        except ssl.SSLCertVerificationError as e:
+            if self.backup_ctx is not None:
+                warnings.warn(f'''
+{self.host} {e}
+Please ask {self.host} to properly register, for example at letsencrypt.org')''')
+                kwargs = {**self.kwargs, 'ssl': self.backup_ctx}
+                return await connector.create_connection(
+                    self.protocol_factory, self.host, self.port, **kwargs)
+            else:
+                raise
+
 
     async def __aenter__(self):
         _transport, protocol = await self.create_connection()
