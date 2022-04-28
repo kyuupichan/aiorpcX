@@ -91,6 +91,10 @@ class TaskGroup:
     for the first task to return a non-None result and cancel tasks that are still
     runnning.  None means wait for no tasks and cancel all still running.
 
+    Completed tasks are normally dropped, but if retain is True, then a reference is kept
+    so that the `results` and `exceptions` properties can be examined.  To avoid runaway
+    memory use, this should only be done for groups with a limited number of tasks.
+
     When join() is called, if any of the tasks in the group raises an exception or is
     cancelled then all tasks in the group, including daemon tasks, are cancelled.  If the
     join() operation itself is cancelled then all running tasks in the group are also
@@ -115,7 +119,7 @@ class TaskGroup:
     tasks: a set of all non-daemonic tasks in the group.
     '''
 
-    def __init__(self, tasks=(), *, wait=all):
+    def __init__(self, tasks=(), *, wait=all, retain=False):
         if wait not in (any, all, object, None):
             raise ValueError('invalid wait argument')
         # Tasks that have not yet finished
@@ -127,6 +131,7 @@ class TaskGroup:
         # Non-daemonic tasks that have completed
         self._done = deque()
         self._wait = wait
+        self._retain = retain
         self.joined = False
         self._semaphore = Semaphore(0)
         self.completed = None
@@ -138,6 +143,8 @@ class TaskGroup:
         if getattr(task, '_daemon', False):
             self.daemons.discard(task)
         else:
+            if not self._retain:
+                self.tasks.remove(task)
             self._pending.discard(task)
             self._done.append(task)
             self._semaphore.release()

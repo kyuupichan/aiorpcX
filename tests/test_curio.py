@@ -133,7 +133,7 @@ async def test_tg_results_exceptions_good():
         await spawn(return_value(2, 0.002)),
         await spawn(return_value(3, 0.001)),
     ]
-    async with TaskGroup(tasks) as t:
+    async with TaskGroup(tasks, retain=True) as t:
         pass
     assert set(t.results) == {1, 2, 3}
     assert t.exceptions == [None] * 3
@@ -141,7 +141,7 @@ async def test_tg_results_exceptions_good():
 
 @pytest.mark.asyncio
 async def test_tg_results_exceptions_bad():
-    async with TaskGroup() as t:
+    async with TaskGroup(retain=True) as t:
         task1 = await t.spawn(sleep, 1)
         task2 = await t.spawn(sleep, 2)
         await sleep(0.001)
@@ -1560,6 +1560,36 @@ async def test_cancel_remaining_on_group_with_stubborn_task():
     # Clean teardown
     evt.set()
     await sleep(0.001)
+
+
+# See https://github.com/kyuupichan/aiorpcX/issues/46
+@pytest.mark.asyncio
+async def test_tasks_pop():
+    delay = 0.01
+    N = 10
+
+    async def finish_quick():
+        await sleep(delay / 2)
+
+    async with TaskGroup() as group:
+        await group.spawn(finish_quick)
+        assert len(group.tasks)
+        await sleep(delay)
+        assert not len(group.tasks)
+
+    async with TaskGroup() as group:
+        for n in range(N):
+            await group.spawn(finish_quick)
+            await group.spawn(finish_quick, daemon=True)
+        assert len(group.tasks) == N
+    assert not len(group.tasks)
+
+    task1 = await spawn(finish_quick)
+    task2 = await spawn(finish_quick, daemon=True)
+    async with TaskGroup((task1, task2)) as group:
+        assert len(group.tasks) == 1
+        await sleep(delay)
+        assert not len(group.tasks)
 
 
 def test_TaskTimeout_str():
