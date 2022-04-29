@@ -324,9 +324,16 @@ class UncaughtTimeoutError(Exception):
 
 def _set_new_deadline(task, deadline):
     def timeout_task():
-        # Unfortunately task.cancel is all we can do with asyncio
-        task.cancel()
-        task._timed_out = deadline
+        task._orig_cancel()
+        task._timed_out = None if getattr(task, "_externally_cancelled", False) else deadline
+    def mycancel(*args, **kwargs):
+        task._orig_cancel(*args, **kwargs)
+        task._externally_cancelled = True
+        task._timed_out = None
+    # We monkey-patch Task.cancel to distinguish timeouts and external cancellation:
+    if not hasattr(task, "_orig_cancel"):
+        task._orig_cancel = task.cancel
+        task.cancel = mycancel
     task._deadline_handle = task._loop.call_at(deadline, timeout_task)
 
 
