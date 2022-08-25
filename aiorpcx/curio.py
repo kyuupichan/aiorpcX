@@ -348,6 +348,7 @@ def _set_task_deadline(task, deadline):
     deadlines.append(deadline)
     task._deadlines = deadlines
     task._timed_out = None
+    task._externally_cancelled = None
 
 
 def _unset_task_deadline(task):
@@ -355,6 +356,9 @@ def _unset_task_deadline(task):
     timed_out_deadline = task._timed_out
     uncaught = timed_out_deadline not in deadlines
     task._deadline_handle.cancel()
+    if hasattr(task, "_orig_cancel"):
+        task.cancel = task._orig_cancel
+        del task._orig_cancel
     deadlines.pop()
     if deadlines:
         _set_new_deadline(task, min(deadlines))

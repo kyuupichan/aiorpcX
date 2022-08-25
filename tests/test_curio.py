@@ -1,3 +1,4 @@
+import asyncio
 from asyncio import get_event_loop, InvalidStateError
 import time
 
@@ -1142,6 +1143,31 @@ async def test_ignore_after_cancellation_race():
     assert not failed_evt.is_set()
     # clean-up
     task_second_timeout.cancel()
+
+
+@pytest.mark.asyncio
+async def test_ignore_after_task_side_effects():
+    async def do_poll():
+        # ... do some network request, e.g. with a timeout, and the timeout works via calling task.cancel():
+        task = asyncio.current_task()
+        task.cancel()
+        try:
+            await Event().wait()
+        except CancelledError:
+            pass
+
+    async def poll_loop():
+        # imagine a task that polls periodically, or if some event is triggered
+        for _ in range(5):
+            async with ignore_after(0.1):
+                await Event().wait()
+            await do_poll()
+
+    try:
+        await poll_loop()
+    except CancelledError:
+        assert False
+
 
 
 #
