@@ -314,7 +314,7 @@ class TestRPCSession:
             assert not protocol._can_send.is_set()
             task = await spawn(session._send_message(b'a'))
             await sleep(0.1)
-            assert task.cancelled()
+            assert isinstance(task.exception(), TaskTimeout)
             assert protocol._can_send.is_set()
             assert session.is_closing()
 
@@ -784,6 +784,7 @@ class TestMessageSession(object):
         async with connect_message_session('localhost', msg_server_port) as session:
             server_session = await MessageServer.current_server()
             await session.send_message((b'version', b'abc'))
+        await sleep(0.02)
         assert server_session.messages == [(b'version', b'abc')]
 
     @pytest.mark.asyncio

@@ -304,7 +304,7 @@ class TaskGroup:
         await self.join()
 
 
-class TaskTimeout(CancelledError):
+class TaskTimeout(Exception):
 
     def __init__(self, secs, *args):
         super().__init__(*args)
