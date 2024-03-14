@@ -1172,6 +1172,63 @@ async def test_ignore_at_context():
         assert False
 
 
+# See https://github.com/kyuupichan/aiorpcX/issues/44
+@pytest.mark.asyncio
+async def test_ignore_after_cancellation_race():
+    failed_evt = Event()
+
+    async def kill_group():
+        await sleep(0.01)
+        raise Exception("kill_group")
+
+    async def second_timeout():
+        await sleep(0.2)
+        failed_evt.set()  # mark unit test as failed
+
+    async def infinite_loop():
+        while True:
+            async with ignore_after(0):
+                await failed_evt.wait()
+                break
+
+    async with TaskGroup() as group:
+        await group.spawn(infinite_loop)
+        await group.spawn(kill_group)
+        # kill_group is supposed to kill this group soon. The unit test is testing this.
+        # If that fails, to avoid infinite-looping and to fail the test:
+        task_second_timeout = await spawn(second_timeout)  # top-level spawn
+    exc = group.exception
+    assert exc and exc.args and exc.args[0] == "kill_group"
+    assert not failed_evt.is_set()
+    # clean-up
+    task_second_timeout.cancel()
+
+
+@pytest.mark.asyncio
+async def test_ignore_after_task_side_effects():
+    async def do_poll():
+        # ... do some network request, e.g. with a timeout, and the timeout works via calling task.cancel():
+        task = asyncio.current_task()
+        task.cancel()
+        try:
+            await Event().wait()
+        except CancelledError:
+            pass
+
+    async def poll_loop():
+        # imagine a task that polls periodically, or if some event is triggered
+        for _ in range(5):
+            async with ignore_after(0.1):
+                await Event().wait()
+            await do_poll()
+
+    try:
+        await poll_loop()
+    except CancelledError:
+        assert False
+
+
+
 #
 # Task group tests snitched from curio
 #
