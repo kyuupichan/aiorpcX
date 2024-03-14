@@ -1,3 +1,4 @@
+import asyncio
 from asyncio import get_event_loop, InvalidStateError
 import time
 
@@ -713,6 +714,65 @@ async def test_nested_context_timeout_uncaught():
         'coro1 start',
         'uncaught timeout'
     ]
+
+
+@pytest.mark.asyncio
+async def test_nested_timeout_asyncio_wait_for():
+    async def foo(*, timeout=0.001):
+        async with timeout_after(timeout):
+            await sleep(10)
+    # internal timeout 1
+    try:
+        await asyncio.wait_for(foo(), None)
+        assert False
+    except TaskTimeout:
+        pass
+    except BaseException as e:
+        assert False, e
+    # internal timeout 2
+    try:
+        await asyncio.wait_for(foo(), 2)
+        assert False
+    except TaskTimeout:
+        pass
+    except BaseException as e:
+        assert False, e
+    # external timeout
+    try:
+        await asyncio.wait_for(foo(timeout=2), 0.001)
+        assert False
+    except asyncio.TimeoutError:
+        pass
+    except BaseException as e:
+        assert False, e
+
+
+@pytest.mark.asyncio
+async def test_nested_timeout_asyncio_ensure_future():
+    async def foo(*, timeout=0.001):
+        async with timeout_after(timeout):
+            await sleep(10)
+    try:
+        await asyncio.ensure_future(foo())
+        assert False
+    except TaskTimeout:
+        pass
+    except BaseException as e:
+        assert False, e
+
+
+@pytest.mark.asyncio
+async def test_nested_timeout_asyncio_create_task():
+    async def foo(*, timeout=0.001):
+        async with timeout_after(timeout):
+            await sleep(10)
+    try:
+        await asyncio.create_task(foo())
+        assert False
+    except TaskTimeout:
+        pass
+    except BaseException as e:
+        assert False, e
 
 
 @pytest.mark.asyncio
