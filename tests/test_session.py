@@ -961,5 +961,5 @@ class TestConcurrency:
         # sleeping.  If it doesn't, worker 2, on exiting its context block, thinks nothing else
         # nothing is trying to retarget the semaphore, and so reduces C._sem_value instead
         # of releasing the semaphore.  This means that worker 3 never wakes up.
-        await sleep(0.02)
+        await sleep(0.05)
         assert not c._semaphore.locked()
