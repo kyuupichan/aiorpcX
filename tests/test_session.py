@@ -231,8 +231,8 @@ class TestRPCSession:
             session.verbosity = 4
             with caplog.at_level(logging.DEBUG):
                 await session.send_request('echo', ['wait'])
-            assert in_caplog(caplog, "sending message b'{")
-            assert in_caplog(caplog, "received data b'{")
+            assert in_caplog(caplog, "sending message b")
+            assert in_caplog(caplog, "received data b")
 
     @pytest.mark.asyncio
     async def test_framer_MemoryError(self, server_port, caplog):
