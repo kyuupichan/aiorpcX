@@ -278,8 +278,9 @@ class TestRPCSession:
         async with connect_rs('localhost', server_port) as session:
             protocol = session.transport
             assert protocol._can_send.is_set()
+            asyncio_transport = protocol._asyncio_transport
             try:
-                protocol.transport.write = my_write
+                asyncio_transport.write = my_write
             except AttributeError:    # uvloop: transport.write is read-only
                 return
             await session._send_message(b'a')
@@ -290,7 +291,7 @@ class TestRPCSession:
             async def monitor():
                 await sleep(0.002)
                 assert called == [b'A\n', b'very\n']
-                assert not protocol_can_send.is_set()
+                assert not protocol._can_send.is_set()
                 protocol.resume_writing()
                 assert protocol._can_send.is_set()
 
@@ -303,6 +304,7 @@ class TestRPCSession:
             limit = None
             # Check idempotent
             protocol.resume_writing()
+            assert task.result() is None
 
     @pytest.mark.asyncio
     async def test_slow_connection_aborted(self, server_port):
