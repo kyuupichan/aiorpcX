@@ -3,11 +3,12 @@ import asyncio
 import pytest
 import tempfile
 from os import path
-from aiorpcx import *
+from aiorpcx import connect_us, serve_us
 from test_session import MyServerSession
 
 if sys.platform.startswith("win"):
     pytest.skip("skipping tests not compatible with Windows platform", allow_module_level=True)
+
 
 @pytest.fixture
 def us_server(event_loop):
@@ -16,10 +17,8 @@ def us_server(event_loop):
         coro = serve_us(MyServerSession, socket_path, loop=event_loop)
         server = event_loop.run_until_complete(coro)
         yield socket_path
-        if hasattr(asyncio, 'all_tasks'):
-            tasks = asyncio.all_tasks(event_loop)
-        else:
-            tasks = asyncio.Task.all_tasks(loop=event_loop)
+        tasks = asyncio.all_tasks(event_loop)
+
         async def close_all():
             server.close()
             await server.wait_closed()

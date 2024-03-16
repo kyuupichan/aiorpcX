@@ -4,12 +4,16 @@ import logging
 import sys
 import time
 from contextlib import suppress
-from functools import partial
 
 import pytest
 
-from aiorpcx import *
-from aiorpcx.session import Concurrency, SessionBase
+from aiorpcx import (
+    MessageSession, ProtocolError, sleep, spawn, TaskGroup, BitcoinFramer, SOCKS5, SOCKSProxy,
+    connect_rs, JSONRPC, Batch, RPCError, TaskTimeout, RPCSession, timeout_after, serve_rs,
+    NewlineFramer, BatchError, ExcessiveSessionCostError, SessionKind, ReplyAndDisconnect,
+    ignore_after, handler_invocation, CancelledError,
+)
+from aiorpcx.session import Concurrency
 from util import RaiseTest
 
 
@@ -90,6 +94,7 @@ def server_port(unused_tcp_port, event_loop):
         tasks = asyncio.all_tasks(event_loop)
     else:
         tasks = asyncio.Task.all_tasks(loop=event_loop)
+
     async def close_all():
         server.close()
         await server.wait_closed()
@@ -104,7 +109,7 @@ class TestRPCSession:
     async def test_no_proxy(self, server_port):
         proxy = SOCKSProxy('localhost:79', SOCKS5, None)
         with pytest.raises(OSError):
-            async with connect_rs('localhost', server_port, proxy=proxy) as session:
+            async with connect_rs('localhost', server_port, proxy=proxy):
                 pass
 
     @pytest.mark.asyncio
@@ -596,16 +601,16 @@ class TestWireResponses(object):
                     "id": 1}
             await session.send(item)
             assert await session.response() == {"jsonrpc": "2.0",
-                                               "result": [42, 43], "id": 1}
+                                                "result": [42, 43], "id": 1}
 
     @pytest.mark.asyncio
     async def test_send_request_named(self, server_port):
         async with connect_wire_session('localhost', server_port) as session:
             item = {"jsonrpc": "2.0", "method": "echo", "params":
-                    {"value" : [42, 43]}, "id": 3}
+                    {"value": [42, 43]}, "id": 3}
             await session.send(item)
             assert await session.response() == {"jsonrpc": "2.0",
-                                               "result": [42, 43], "id": 3}
+                                                "result": [42, 43], "id": 3}
 
     @pytest.mark.asyncio
     async def test_send_notification(self, server_port):
@@ -699,9 +704,9 @@ class TestWireResponses(object):
                         "id": 0}]
             await session.send(item)
             assert await session.response() == [
-                { "jsonrpc": "2.0", "id": None,
-                  "error": {"code": -32600, "message":
-                            "request object must be a dictionary"}},
+                {"jsonrpc": "2.0", "id": None,
+                 "error": {"code": -32600, "message":
+                           "request object must be a dictionary"}},
                 {"jsonrpc": "2.0", "result": 42, "id": 0}]
 
     @pytest.mark.asyncio
@@ -758,6 +763,7 @@ class MessageServer(MessageSession):
         elif command == b'sleep':
             await sleep(0.2)
 
+
 @pytest.fixture
 def msg_server_port(event_loop, unused_tcp_port):
     coro = serve_rs(MessageServer, 'localhost', unused_tcp_port, loop=event_loop)
@@ -767,6 +773,7 @@ def msg_server_port(event_loop, unused_tcp_port):
         tasks = asyncio.all_tasks(event_loop)
     else:
         tasks = asyncio.Task.all_tasks(loop=event_loop)
+
     async def close_all():
         server.close()
         await server.wait_closed()
@@ -891,7 +898,7 @@ class TestConcurrency:
                     counter += 1
                     in_flight += 1
                     await sleep(pause)
-                    in_flight -=1
+                    in_flight -= 1
 
             async with TaskGroup() as group:
                 for n in range(100):
@@ -948,7 +955,8 @@ class TestConcurrency:
             if n == 1:
                 c.set_target(1)
 
-        tasks = [await spawn(worker, n) for n in range(1, 4)]
+        for n in range(1, 4):
+            await spawn(worker, n)
         # Whilst this task sleeps, the sequence is:
         # Worker 1 grabs C and sleeps
         # Worker 2 grabs C and sleeps

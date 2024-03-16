@@ -1,0 +1,7 @@
+[flake8]
+
+max_line_length=99
+exclude=aiorpcx/__init__.py
+  build/
+  docs/conf.py
+  tests/conftest.py

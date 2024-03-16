@@ -1,12 +1,16 @@
 import sys
 
-from itertools import chain, combinations, count
+from itertools import combinations, count
 import json
 import pytest
 
-from aiorpcx import *
+from aiorpcx import (
+    Request, handler_invocation, Queue, ignore_after, ProtocolError,
+    TaskGroup, Batch, Notification, JSONRPCConnection, JSONRPC, JSONRPCv1, JSONRPCv2, JSONRPCLoose,
+    RPCError, JSONRPCAutoDetect, timeout_after, Event,
+)
 from aiorpcx.jsonrpc import Response, CodeMessageError
-from util import RaiseTest, assert_RPCError, assert_ProtocolError
+from util import assert_RPCError, assert_ProtocolError
 from random import shuffle
 
 
@@ -47,6 +51,7 @@ def canonical_message(protocol, payload):
         if 'result' in payload and 'error' not in payload:
             payload['error'] = None
     return json.dumps(payload).encode()
+
 
 def payload_to_item(protocol, payload):
     return protocol.message_to_item(canonical_message(protocol, payload))
@@ -732,7 +737,7 @@ async def test_send_request_and_response(protocol):
     waiting = Event()
     send_message = None
 
-    async def send_message():
+    async def send_mess():
         nonlocal send_message
         send_message, future = connection.send_request(req)
         waiting.set()
@@ -772,7 +777,7 @@ async def test_send_request_and_response(protocol):
             connection.receive_message(message)
 
     async with TaskGroup() as group:
-        await group.spawn(send_message)
+        await group.spawn(send_mess)
         await group.spawn(send_response)
 
     assert not connection.pending_requests()
@@ -1004,6 +1009,7 @@ async def test_max_response_size(protocol):
     queue = Queue()
 
     JSONRPCConnection._id_counter = count()
+
     async def send_request_good(request):
         message, future = connection.send_request(request)
         await queue.put(message)

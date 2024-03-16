@@ -7,6 +7,7 @@ import aiorpcx
 async def handle_echo(message):
     return message
 
+
 async def handle_sum(*values):
     return sum(values, 0)
 

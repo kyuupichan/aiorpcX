@@ -17,8 +17,8 @@ jobs:
   - script: |
       coverage run -m pytest --junitxml=junit/test-results.xml tests && coverage xml
     displayName: 'Test with pytest'
-  - bash: ./pylint
-    displayName: pylint
+  - bash: flake8
+    displayName: flake8
   - task: PublishTestResults@2
     condition: succeededOrFailed()
     inputs:
@@ -31,7 +31,3 @@ jobs:
   - bash: |
       COVERALLS_REPO_TOKEN=$(CRT) coveralls
     displayName: 'Coveralls'
-  - bash: |
-      pycodestyle --max-line-length=100 aiorpcx/*.py
-    condition: succeededOrFailed()
-    displayName: 'Validate code style'

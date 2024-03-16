@@ -59,7 +59,6 @@ class FramerBase:
         raise NotImplementedError
 
 
-# pylint:disable=W0223
 class NewlineFramer(FramerBase):
     '''A framer for a protocol where messages are separated by newlines.'''
 

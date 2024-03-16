@@ -1,12 +1,13 @@
 import asyncio
 from functools import partial
 from ipaddress import IPv4Address, IPv6Address
-from socket import AF_INET, AF_INET6
 
 import pytest
 
-from aiorpcx.util import SignatureInfo, signature_info, is_async_call
-from aiorpcx.util import *
+from aiorpcx.util import (
+    is_async_call, is_valid_hostname, validate_port, validate_protocol, classify_host,
+    Service, NetAddress, ServicePart,
+)
 
 
 async def coro(x, y):
@@ -57,7 +58,7 @@ def test_is_async_call():
     (('a' * 62 + '.') * 4 + 'a', True),    # 253
     (('a' * 62 + '.') * 4 + 'ab', False),   # 254
 ))
-def test_is_valid_hostname(hostname,answer):
+def test_is_valid_hostname(hostname, answer):
     assert is_valid_hostname(hostname) == answer
 
 
@@ -92,7 +93,7 @@ def test_classify_host_bad(host):
 
 class TestNetAddress:
 
-    @pytest.mark.parametrize("host,port,answer,host_type",(
+    @pytest.mark.parametrize("host,port,answer,host_type", (
         ('foo.bar', '23', 'foo.bar:23', str),
         ('foo.bar', 23, 'foo.bar:23', str),
         ('foo.bar', 23.0, TypeError, None),
@@ -103,7 +104,7 @@ class TestNetAddress:
         ('[::1]', 0, ValueError, None),
         ('[::1]', 65536, ValueError, None),
     ))
-    def test_constructor(self, host,port,answer,host_type):
+    def test_constructor(self, host, port, answer, host_type):
         if isinstance(answer, type) and issubclass(answer, Exception):
             with pytest.raises(answer):
                 NetAddress(host, port)
@@ -122,7 +123,7 @@ class TestNetAddress:
     def test_hashable(self):
         assert len({NetAddress('1.2.3.4', 23), NetAddress('1.2.3.4', '23')}) == 1
 
-    @pytest.mark.parametrize("host,port,answer",(
+    @pytest.mark.parametrize("host,port,answer", (
         ('foo.bar', '23', "NetAddress('foo.bar', 23)"),
         ('foo.bar', 23, "NetAddress('foo.bar', 23)"),
         ('::1', 15, "NetAddress(IPv6Address('::1'), 15)"),
@@ -131,7 +132,7 @@ class TestNetAddress:
     def test_repr(self, host, port, answer):
         assert repr(NetAddress(host, port)) == answer
 
-    @pytest.mark.parametrize("string,default_func,answer",(
+    @pytest.mark.parametrize("string,default_func,answer", (
         ('foo.bar:23', None, NetAddress('foo.bar', 23)),
         (':23', NetAddress.default_host('localhost'), NetAddress('localhost', 23)),
         (':23', None, ValueError),
@@ -157,19 +158,17 @@ class TestNetAddress:
     def test_from_string(self, string, default_func, answer):
         if isinstance(answer, type) and issubclass(answer, Exception):
             with pytest.raises(answer):
-                NetAddress.from_string(string,default_func=default_func)
+                NetAddress.from_string(string, default_func=default_func)
         else:
-            assert NetAddress.from_string(string,default_func=default_func) == answer
+            assert NetAddress.from_string(string, default_func=default_func) == answer
 
-
-    @pytest.mark.parametrize("address,answer",(
+    @pytest.mark.parametrize("address,answer", (
         (NetAddress('foo.bar', 23), 'foo.bar:23'),
         (NetAddress('abcd::dbca', 40), '[abcd::dbca]:40'),
         (NetAddress('1.2.3.5', 50000), '1.2.3.5:50000'),
     ))
     def test_str(self, address, answer):
         assert str(address) == answer
-
 
     @pytest.mark.parametrize("attr", ('host', 'port'))
     def test_immutable(self, attr):

@@ -321,7 +321,7 @@ class MessageSession(SessionBase):
         except ExcessiveSessionCostError:
             self.on_disconnect_due_to_excessive_session_cost()
             await self.close()
-        except Exception:   # pylint:disable=W0703
+        except Exception:
             self.logger.exception(f'exception handling {message}')
             self._bump_errors()
 
@@ -491,7 +491,7 @@ class RPCSession(SessionBase):
             self.on_disconnect_due_to_excessive_session_cost()
             result = RPCError(JSONRPC.EXCESSIVE_RESOURCE_USAGE, 'excessive resource usage')
             disconnect = True
-        except Exception:     # pylint:disable=W0703
+        except Exception:
             self.logger.exception(f'exception handling {request}')
             result = RPCError(JSONRPC.INTERNAL_ERROR, 'internal server error')
 

@@ -3,7 +3,10 @@ import random
 
 import pytest
 
-from aiorpcx import *
+from aiorpcx import (
+    BinaryFramer, BitcoinFramer, OversizedPayloadError, BadMagicError,
+    BadChecksumError, FramerBase, NewlineFramer, TaskGroup, sleep, timeout_after,
+)
 from aiorpcx.framing import ByteQueue
 
 
@@ -34,6 +37,7 @@ async def test_NewlineFramer_messages():
 
     async def receive_message():
         return await framer.receive_message()
+
     async def put_rest():
         await sleep(0.001)
         framer.received_bytes(b'i\n')

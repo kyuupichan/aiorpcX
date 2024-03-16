@@ -9,7 +9,10 @@ import pytest
 
 from aiorpcx.socks import NeedData
 from aiorpcx.rawsocket import RSTransport
-from aiorpcx import *
+from aiorpcx import (
+    RPCSession, NetAddress, SOCKS5, SOCKSProxy, SOCKS4a, SOCKS4, connect_rs,
+    SOCKSProtocolError, SOCKSUserAuth, SOCKSFailure, SOCKSError, SOCKSRandomAuth,
+)
 
 
 # TODO : Server tests - short and close, or just waiting no response
@@ -322,7 +325,7 @@ class TestSOCKS5(object):
     def test_auth_failure(self, addr5):
         auth = auth_methods[1]
         client = SOCKS5(addr5, auth)
-        auth_failure_bytes = self.response(2, addr5.host, auth_response = b'\1\xff')
+        auth_failure_bytes = self.response(2, addr5.host, auth_response=b'\1\xff')
         server = FakeResponder(auth_failure_bytes)
         with pytest.raises(SOCKSFailure) as err:
             run_communication(client, server)
@@ -509,7 +512,6 @@ class TestSOCKSProxy(object):
 
     @pytest.mark.asyncio
     async def test_good_SOCKS4a(self, proxy_address, auth):
-        loop = asyncio.get_event_loop()
         FakeServer.response = TestSOCKS4a.response()
         result = await SOCKSProxy.auto_detect_at_address(proxy_address, auth)
         assert isinstance(result, SOCKSProxy)
@@ -521,7 +523,6 @@ class TestSOCKSProxy(object):
 
     @pytest.mark.asyncio
     async def test_good_SOCKS4(self, proxy_address, auth):
-        loop = asyncio.get_event_loop()
         FakeServer.response = TestSOCKS4.response()
         result = await SOCKSProxy.auto_detect_at_address(proxy_address, auth)
         assert isinstance(result, SOCKSProxy)
@@ -565,7 +566,6 @@ class TestSOCKSProxy(object):
 
     @pytest.mark.asyncio
     async def test_create_connection_connect_failure(self, auth):
-        chosen_auth = 2 if auth else 0
         proxy = SOCKSProxy('localhost:1', SOCKS5, auth)
         with pytest.raises(OSError):
             await proxy.create_connection(None, GCOM.host, GCOM.port)

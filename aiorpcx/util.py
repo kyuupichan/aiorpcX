@@ -127,7 +127,6 @@ class NetAddress:
         self._port = validate_port(port)
 
     def __eq__(self, other):
-        # pylint: disable=protected-access
         return self._host == other._host and self._port == other._port
 
     def __hash__(self):
@@ -192,7 +191,6 @@ class Service:
         self._address = address
 
     def __eq__(self, other):
-        # pylint: disable=protected-access
         return self._protocol == other._protocol and self._address == other._address
 
     def __hash__(self):
