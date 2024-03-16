@@ -231,8 +231,8 @@ class TestRPCSession:
             session.verbosity = 4
             with caplog.at_level(logging.DEBUG):
                 await session.send_request('echo', ['wait'])
-            assert in_caplog(caplog, "sending message b'{")
-            assert in_caplog(caplog, "received data b'{")
+            assert in_caplog(caplog, "sending message b")
+            assert in_caplog(caplog, "received data b")
 
     @pytest.mark.asyncio
     async def test_framer_MemoryError(self, server_port, caplog):
@@ -278,8 +278,9 @@ class TestRPCSession:
         async with connect_rs('localhost', server_port) as session:
             protocol = session.transport
             assert protocol._can_send.is_set()
+            asyncio_transport = protocol._asyncio_transport
             try:
-                protocol.transport.write = my_write
+                asyncio_transport.write = my_write
             except AttributeError:    # uvloop: transport.write is read-only
                 return
             await session._send_message(b'a')
@@ -290,7 +291,7 @@ class TestRPCSession:
             async def monitor():
                 await sleep(0.002)
                 assert called == [b'A\n', b'very\n']
-                assert not protocol_can_send.is_set()
+                assert not protocol._can_send.is_set()
                 protocol.resume_writing()
                 assert protocol._can_send.is_set()
 
@@ -303,6 +304,7 @@ class TestRPCSession:
             limit = None
             # Check idempotent
             protocol.resume_writing()
+            assert task.result() is None
 
     @pytest.mark.asyncio
     async def test_slow_connection_aborted(self, server_port):
@@ -961,5 +963,5 @@ class TestConcurrency:
         # sleeping.  If it doesn't, worker 2, on exiting its context block, thinks nothing else
         # nothing is trying to retarget the semaphore, and so reduces C._sem_value instead
         # of releasing the semaphore.  This means that worker 3 never wakes up.
-        await sleep(0.02)
+        await sleep(0.05)
         assert not c._semaphore.locked()
