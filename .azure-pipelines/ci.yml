@@ -5,31 +5,76 @@ pr:
 jobs:
 - template: run-tests.yml
   parameters:
-    name: Py38_Ubuntu
-    vmImage: 'ubuntu-16.04'
-    pythonVersion: '3.8'
+    name: Py312_Ubuntu
+    vmImage: 'ubuntu-latest'
+    pythonVersion: '3.12'
 - template: run-tests.yml
   parameters:
-    name: Py38_Mac
-    vmImage: 'macOS-10.14'
-    pythonVersion: '3.8'
+    name: Py312_Mac
+    vmImage: 'macOS-latest'
+    pythonVersion: '3.12'
 - template: run-tests.yml
   parameters:
-    name: Py38_Win
-    vmImage: 'windows-2019'
-    pythonVersion: '3.8'
+    name: Py312_Win
+    vmImage: 'windows-latest'
+    pythonVersion: '3.12'
+- template: run-tests.yml
+  parameters:
+    name: Py311_Ubuntu
+    vmImage: 'ubuntu-latest'
+    pythonVersion: '3.11'
+- template: run-tests.yml
+  parameters:
+    name: Py311_Mac
+    vmImage: 'macOS-latest'
+    pythonVersion: '3.11'
+- template: run-tests.yml
+  parameters:
+    name: Py311_Win
+    vmImage: 'windows-latest'
+    pythonVersion: '3.11'
+- template: run-tests.yml
+  parameters:
+    name: Py310_Ubuntu
+    vmImage: 'ubuntu-latest'
+    pythonVersion: '3.10'
+- template: run-tests.yml
+  parameters:
+    name: Py310_Mac
+    vmImage: 'macOS-latest'
+    pythonVersion: '3.10'
+- template: run-tests.yml
+  parameters:
+    name: Py310_Win
+    vmImage: 'windows-latest'
+    pythonVersion: '3.10'
 - template: run-tests.yml
   parameters:
     name: Py39_Ubuntu
-    vmImage: 'ubuntu-16.04'
+    vmImage: 'ubuntu-latest'
     pythonVersion: '3.9'
 - template: run-tests.yml
   parameters:
     name: Py39_Mac
-    vmImage: 'macOS-10.14'
+    vmImage: 'macOS-latest'
     pythonVersion: '3.9'
 - template: run-tests.yml
   parameters:
     name: Py39_Win
-    vmImage: 'windows-2019'
+    vmImage: 'windows-latest'
     pythonVersion: '3.9'
+- template: run-tests.yml
+  parameters:
+    name: Py38_Ubuntu
+    vmImage: 'ubuntu-latest'
+    pythonVersion: '3.8'
+- template: run-tests.yml
+  parameters:
+    name: Py38_Mac
+    vmImage: 'macOS-latest'
+    pythonVersion: '3.8'
+- template: run-tests.yml
+  parameters:
+    name: Py38_Win
+    vmImage: 'windows-latest'
+    pythonVersion: '3.8'
