@@ -22,7 +22,7 @@ setuptools.setup(
     python_requires='>=3.8',
     install_requires=[],
     extras_require={
-        'ws': 'websockets',
+        'ws': 'websockets>=12.0',
     },
     packages=['aiorpcx'],
     description='Generic async RPC implementation, including JSON-RPC',

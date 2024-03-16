@@ -1,7 +1,6 @@
 import asyncio
 
 import pytest
-import websockets
 
 from aiorpcx import *
 
@@ -10,7 +9,7 @@ from test_session import MyServerSession
 
 @pytest.fixture
 def ws_server(unused_tcp_port, event_loop):
-    coro = serve_ws(MyServerSession, 'localhost', unused_tcp_port, loop=event_loop)
+    coro = serve_ws(MyServerSession, 'localhost', unused_tcp_port)
     server = event_loop.run_until_complete(coro)
     yield f'ws://localhost:{unused_tcp_port}'
     if hasattr(asyncio, 'all_tasks'):

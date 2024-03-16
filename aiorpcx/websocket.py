@@ -27,7 +27,9 @@
 from functools import partial
 
 try:
-    import websockets
+    from websockets.client import connect
+    from websockets.server import serve
+    from websockets.exceptions import ConnectionClosed
 except ImportError:
     websockets = None
 
@@ -56,7 +58,7 @@ class WSTransport:
     @classmethod
     async def ws_client(cls, uri, **kwargs):
         session_factory = kwargs.pop('session_factory', RPCSession)
-        websocket = await websockets.connect(uri, **kwargs)
+        websocket = await connect(uri, **kwargs)
         return cls(websocket, session_factory, SessionKind.CLIENT)
 
     async def recv_message(self):
@@ -70,7 +72,7 @@ class WSTransport:
     async def process_messages(self):
         try:
             await self.session.process_messages(self.recv_message)
-        except websockets.ConnectionClosed:
+        except ConnectionClosed:
             pass
 
     # API exposed to session
@@ -128,7 +130,7 @@ class WSClient:
 
 def serve_ws(session_factory, *args, **kwargs):
     ws_handler = partial(WSTransport.ws_server, session_factory)
-    return websockets.serve(ws_handler, *args, **kwargs)
+    return serve(ws_handler, *args, **kwargs)
 
 
 connect_ws = WSClient
