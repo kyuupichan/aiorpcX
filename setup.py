@@ -19,7 +19,7 @@ version = find_version(os.path.join(tld, 'aiorpcx', '__init__.py'))
 setuptools.setup(
     version=version,
     python_requires='>=3.8',
-    packages=['aiorpcX'],
+    packages=['aiorpcx'],
     # Tell setuptools to include data files specified by MANIFEST.in.
     include_package_data=True,
     download_url=('https://github.com/kyuupichan/aiorpcX/archive/'

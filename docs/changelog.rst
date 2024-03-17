@@ -8,6 +8,11 @@ ChangeLog
 Version 0.23 (17 Mar 2024)
 ----------------------------
 
+* fix packaging problem with 0.23
+
+Version 0.23 (17 Mar 2024)
+----------------------------
+
 * TaskTimeout now derives from Exception not CancelledError
 * make several tests more robust
 * move to flake8
