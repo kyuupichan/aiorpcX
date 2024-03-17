@@ -5,6 +5,13 @@ ChangeLog
           for a 1.0 release in the coming months.
 
 
+Version 0.23 (17 Mar 2024)
+----------------------------
+
+* TaskTimeout now derives from Exception not CancelledError
+* make several tests more robust
+* move to flake8
+
 Version 0.22.1 (25 May 2021)
 ----------------------------
 
