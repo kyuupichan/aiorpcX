@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = 'aiorpcX'
+dynamic = ['version', 'readme']
+requires-python = '>=3.8'
+dependencies = []
+description = 'Generic async RPC implementation, including JSON-RPC'
+authors = [{name = 'Neil Booth', email = 'kyuupichan@pm.me'}]
+license = {file = "LICENCE"}
+urls = {'Project-URL' = 'https://github.com/kyuupichan/aiorpcX'}
+classifiers = [
+  'Development Status :: 4 - Beta',
+  'Framework :: AsyncIO',
+  'Intended Audience :: Developers',
+  'License :: OSI Approved :: MIT License',
+  'Operating System :: OS Independent',
+  "Programming Language :: Python :: 3.8",
+  'Topic :: Internet',
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.optional-dependencies]
+'ws' = ['websockets>=12.0']
