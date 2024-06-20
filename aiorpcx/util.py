@@ -24,7 +24,8 @@
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 __all__ = ('instantiate_coroutine', 'is_valid_hostname', 'classify_host',
-           'validate_port', 'validate_protocol', 'Service', 'ServicePart', 'NetAddress')
+           'validate_port', 'validate_protocol', 'Service', 'ServicePart',
+           'NetAddress', 'UnixAddress')
 
 
 import asyncio
@@ -178,6 +179,30 @@ class NetAddress:
     @classmethod
     def default_port(cls, port):
         return cls.default_host_and_port(None, port)
+
+
+class UnixAddress:
+
+    def __init__(self, path: str):
+        '''Construct a UnixAddress from a path.'''
+        self._path = path
+
+    def __eq__(self, other):
+        # pylint: disable=protected-access
+        return isinstance(other, UnixAddress) and self._path == other._path
+
+    def __hash__(self):
+        return hash((self._path))
+
+    @property
+    def path(self):
+        return self._path
+
+    def __str__(self):
+        return f'{self.path}'
+
+    def __repr__(self):
+        return f'UnixAddress({self.path!r})'
 
 
 class Service:
