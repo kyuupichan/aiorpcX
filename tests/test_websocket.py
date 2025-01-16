@@ -1,5 +1,3 @@
-import asyncio
-
 import pytest
 
 from aiorpcx import connect_ws, NetAddress, serve_ws
@@ -8,7 +6,7 @@ from test_session import MyServerSession
 
 
 @pytest.fixture(scope="function")
-async def ws_server(unused_tcp_port, event_loop):
+async def ws_server(unused_tcp_port):
     server = await serve_ws(MyServerSession, 'localhost', unused_tcp_port)
     yield f'ws://localhost:{unused_tcp_port}'
     server.close()
