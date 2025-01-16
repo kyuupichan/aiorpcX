@@ -7,19 +7,12 @@ from aiorpcx import connect_ws, NetAddress, serve_ws
 from test_session import MyServerSession
 
 
-@pytest.fixture
-def ws_server(unused_tcp_port, event_loop):
-    coro = serve_ws(MyServerSession, 'localhost', unused_tcp_port)
-    server = event_loop.run_until_complete(coro)
+@pytest.fixture(scope="function")
+async def ws_server(unused_tcp_port, event_loop):
+    server = await serve_ws(MyServerSession, 'localhost', unused_tcp_port)
     yield f'ws://localhost:{unused_tcp_port}'
-    tasks = asyncio.all_tasks(event_loop)
-
-    async def close_all():
-        server.close()
-        await server.wait_closed()
-        if tasks:
-            await asyncio.wait(tasks)
-    event_loop.run_until_complete(close_all())
+    server.close()
+    await server.wait_closed()
 
 
 @pytest.mark.filterwarnings("ignore:'with .*:DeprecationWarning")

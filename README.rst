@@ -14,7 +14,7 @@ library implementation of RPC suitable for an application that is a
 client, server or both.
 
   :Licence: MIT
-  :Language: Python (>= 3.8)
+  :Language: Python (>= 3.9)
   :Author: Neil Booth
 
 Documentation

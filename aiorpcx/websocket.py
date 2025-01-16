@@ -27,8 +27,7 @@
 from functools import partial
 
 try:
-    from websockets.client import connect
-    from websockets.server import serve
+    from websockets import connect, serve
     from websockets.exceptions import ConnectionClosed
 except ImportError:
     websockets = None
@@ -51,7 +50,7 @@ class WSTransport:
         self.closing = False
 
     @classmethod
-    async def ws_server(cls, session_factory, websocket, _path):
+    async def ws_server(cls, session_factory, websocket):
         transport = cls(websocket, session_factory, SessionKind.SERVER)
         await transport.process_messages()
 

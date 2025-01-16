@@ -5,6 +5,11 @@ ChangeLog
           for a 1.0 release in the coming months.
 
 
+Version 0.24 (16 Jan 2024)
+----------------------------
+
+* bump websockets library to >=14.0 and Python version to >=3.9
+
 Version 0.23 (17 Mar 2024)
 ----------------------------
 
