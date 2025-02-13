@@ -142,9 +142,13 @@ class RSTransport(asyncio.Protocol):
 
 class RSClient:
 
-    def __init__(self, host=None, port=None, proxy=None, *, framer=None, **kwargs):
+    def __init__(
+        self, host=None, port=None, proxy=None, *, framer=None, transport=None, **kwargs,
+    ):
         session_factory = kwargs.pop('session_factory', RPCSession)
-        self.protocol_factory = partial(RSTransport, session_factory, framer,
+        if transport is None:
+            transport = RSTransport
+        self.protocol_factory = partial(transport, session_factory, framer,
                                         SessionKind.CLIENT)
         self.host = host
         self.port = port
@@ -169,9 +173,13 @@ class RSClient:
         await self.session.close()
 
 
-async def serve_rs(session_factory, host=None, port=None, *, framer=None, loop=None, **kwargs):
+async def serve_rs(
+    session_factory, host=None, port=None, *, framer=None, transport=None, loop=None, **kwargs,
+):
     loop = loop or asyncio.get_event_loop()
-    protocol_factory = partial(RSTransport, session_factory, framer, SessionKind.SERVER)
+    if transport is None:
+        transport = RSTransport
+    protocol_factory = partial(transport, session_factory, framer, SessionKind.SERVER)
     return await loop.create_server(protocol_factory, host, port, **kwargs)
 
 
