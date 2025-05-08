@@ -9,7 +9,7 @@ from .util import *
 from .websocket import *
 
 
-_version_str = '0.24.0'
+_version_str = '0.25.0'
 _version = tuple(int(part) for part in _version_str.split('.'))
 
 
