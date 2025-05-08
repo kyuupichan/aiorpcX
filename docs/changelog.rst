@@ -5,6 +5,9 @@ ChangeLog
           for a 1.0 release in the coming months.
 
 
+Version 0.25 (08 May 2025)
+--------------------------
+
 Version 0.24 (16 Jan 2024)
 ----------------------------
 
