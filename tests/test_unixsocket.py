@@ -11,20 +11,14 @@ if sys.platform.startswith("win"):
 
 
 @pytest.fixture
-def us_server(event_loop):
+async def us_server():
+    event_loop = asyncio.get_running_loop()
     with tempfile.TemporaryDirectory() as tmp_folder:
         socket_path = path.join(tmp_folder, 'test.socket')
-        coro = serve_us(MyServerSession, socket_path, loop=event_loop)
-        server = event_loop.run_until_complete(coro)
+        server = await serve_us(MyServerSession, socket_path)
         yield socket_path
-        tasks = asyncio.all_tasks(event_loop)
-
-        async def close_all():
-            server.close()
-            await server.wait_closed()
-            if tasks:
-                await asyncio.wait(tasks)
-        event_loop.run_until_complete(close_all())
+        server.close()
+        await server.wait_closed()
 
 
 class TestUSTransport:

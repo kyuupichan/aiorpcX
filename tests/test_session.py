@@ -17,13 +17,6 @@ from aiorpcx.session import Concurrency
 from util import RaiseTest
 
 
-if sys.version_info >= (3, 7):
-    from asyncio import all_tasks
-else:
-    from asyncio import Task
-    all_tasks = Task.all_tasks
-
-
 def raises_method_not_found(message):
     return RaiseTest(JSONRPC.METHOD_NOT_FOUND, message, RPCError)
 
@@ -86,21 +79,12 @@ def caplog_count(caplog, message):
 
 
 @pytest.fixture
-def server_port(unused_tcp_port, event_loop):
-    coro = serve_rs(MyServerSession, 'localhost', unused_tcp_port, loop=event_loop)
-    server = event_loop.run_until_complete(coro)
+async def server_port(unused_tcp_port):
+    server = await serve_rs(MyServerSession, 'localhost', unused_tcp_port)
     yield unused_tcp_port
-    if hasattr(asyncio, 'all_tasks'):
-        tasks = asyncio.all_tasks(event_loop)
-    else:
-        tasks = asyncio.Task.all_tasks(loop=event_loop)
 
-    async def close_all():
-        server.close()
-        await server.wait_closed()
-        if tasks:
-            await asyncio.wait(tasks)
-    event_loop.run_until_complete(close_all())
+    server.close()
+    await server.wait_closed()
 
 
 class TestRPCSession:
@@ -765,21 +749,12 @@ class MessageServer(MessageSession):
 
 
 @pytest.fixture
-def msg_server_port(event_loop, unused_tcp_port):
-    coro = serve_rs(MessageServer, 'localhost', unused_tcp_port, loop=event_loop)
-    server = event_loop.run_until_complete(coro)
+async def msg_server_port(unused_tcp_port):
+    server = await serve_rs(MessageServer, 'localhost', unused_tcp_port)
     yield unused_tcp_port
-    if hasattr(asyncio, 'all_tasks'):
-        tasks = asyncio.all_tasks(event_loop)
-    else:
-        tasks = asyncio.Task.all_tasks(loop=event_loop)
 
-    async def close_all():
-        server.close()
-        await server.wait_closed()
-        if tasks:
-            await asyncio.wait(tasks)
-    event_loop.run_until_complete(close_all())
+    server.close()
+    await server.wait_closed()
 
 
 def connect_message_session(host, port, proxy=None, framer=None):

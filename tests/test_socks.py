@@ -482,10 +482,10 @@ localhosts = ['127.0.0.1', '::1', 'localhost']
 
 
 @pytest.fixture(params=localhosts)
-def proxy_address(request, event_loop, unused_tcp_port):
+async def proxy_address(request, unused_tcp_port):
     host = request.param
-    coro = event_loop.create_server(FakeServer, host=host, port=unused_tcp_port)
-    server = event_loop.run_until_complete(coro)
+    event_loop = asyncio.get_running_loop()
+    server = await event_loop.create_server(FakeServer, host=host, port=unused_tcp_port)
     yield NetAddress(host, unused_tcp_port)
     server.close()
 
