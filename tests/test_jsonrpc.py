@@ -1064,7 +1064,7 @@ async def test_max_response_size(protocol):
             await group.spawn(send_batch(batch))
 
 
-def test_misc(protocol):
+async def test_misc(protocol):
     '''Misc tests to get full coverage.'''
     connection = JSONRPCConnection(protocol)
 
