@@ -1640,16 +1640,16 @@ async def test_cancel_remaining_on_group_with_stubborn_task():
 # See https://github.com/kyuupichan/aiorpcX/issues/46
 @pytest.mark.asyncio
 async def test_tasks_pop():
-    delay = 0.05
+    delay = 0.10
     N = 10
 
     async def finish_quick():
-        await sleep(delay / 2)
+        await sleep(delay)
 
     async with TaskGroup() as group:
         await group.spawn(finish_quick)
         assert len(group.tasks)
-        await sleep(delay)
+        await sleep(delay * 2)
         assert not len(group.tasks)
 
     async with TaskGroup() as group:
