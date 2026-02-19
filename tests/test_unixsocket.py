@@ -1,5 +1,4 @@
 import sys
-import asyncio
 import pytest
 import tempfile
 from os import path
@@ -12,7 +11,6 @@ if sys.platform.startswith("win"):
 
 @pytest.fixture
 async def us_server():
-    event_loop = asyncio.get_running_loop()
     with tempfile.TemporaryDirectory() as tmp_folder:
         socket_path = path.join(tmp_folder, 'test.socket')
         server = await serve_us(MyServerSession, socket_path)

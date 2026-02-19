@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import sys
 import time
 from contextlib import suppress
 
@@ -877,7 +876,6 @@ class TestConcurrency:
                     await group.spawn(worker)
 
         async def get_stable_in_flight():
-            nonlocal in_flight
             prior = in_flight
             while True:
                 await sleep(0)
