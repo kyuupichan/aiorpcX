@@ -1644,12 +1644,12 @@ async def test_tasks_pop():
     N = 10
 
     async def finish_quick():
-        await sleep(delay)
+        await sleep(delay / 2)
 
     async with TaskGroup() as group:
         await group.spawn(finish_quick)
         assert len(group.tasks)
-        await sleep(delay * 2)
+        await sleep(delay)
         assert not len(group.tasks)
 
     async with TaskGroup() as group:
