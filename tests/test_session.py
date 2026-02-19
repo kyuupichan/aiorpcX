@@ -268,10 +268,7 @@ class TestRPCSession:
             protocol = session.transport
             assert protocol._can_send.is_set()
             asyncio_transport = protocol._asyncio_transport
-            try:
-                asyncio_transport.write = my_write
-            except AttributeError:    # uvloop: transport.write is read-only
-                return
+            asyncio_transport.write = my_write
             await session._send_message(b'a')
             assert protocol._can_send.is_set()
             assert called

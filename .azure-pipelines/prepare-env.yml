@@ -4,7 +4,6 @@ parameters:
 steps:
 - script: |
     python -m pip install websockets
-    python -m pip install uvloop
     python -m pip install flake8
     python -m pip install coveralls coverage
     python -m pip install pytest pytest-asyncio Sphinx
