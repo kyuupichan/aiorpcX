@@ -5,6 +5,21 @@ pr:
 jobs:
 - template: run-tests.yml
   parameters:
+    name: Py314_Ubuntu
+    vmImage: 'ubuntu-latest'
+    pythonVersion: '3.14'
+- template: run-tests.yml
+  parameters:
+    name: Py314_Mac
+    vmImage: 'macOS-latest'
+    pythonVersion: '3.14'
+- template: run-tests.yml
+  parameters:
+    name: Py314_Win
+    vmImage: 'windows-latest'
+    pythonVersion: '3.14'
+- template: run-tests.yml
+  parameters:
     name: Py313_Ubuntu
     vmImage: 'ubuntu-latest'
     pythonVersion: '3.13'
@@ -63,18 +78,3 @@ jobs:
     name: Py310_Win
     vmImage: 'windows-latest'
     pythonVersion: '3.10'
-- template: run-tests.yml
-  parameters:
-    name: Py39_Ubuntu
-    vmImage: 'ubuntu-latest'
-    pythonVersion: '3.9'
-- template: run-tests.yml
-  parameters:
-    name: Py39_Mac
-    vmImage: 'macOS-latest'
-    pythonVersion: '3.9'
-- template: run-tests.yml
-  parameters:
-    name: Py39_Win
-    vmImage: 'windows-latest'
-    pythonVersion: '3.9'
